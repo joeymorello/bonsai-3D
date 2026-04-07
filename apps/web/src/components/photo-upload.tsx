@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getPresignedUpload, completeUpload } from "@/lib/api";
+import { getAuthToken } from "@/lib/api";
 
 interface UploadItem {
   file: File;
@@ -22,24 +22,20 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
   const uploadFile = useCallback(
     async (file: File, index: number) => {
       try {
-        // Update status to uploading
         setUploads((prev) =>
           prev.map((u, i) =>
             i === index ? { ...u, status: "uploading" as const } : u,
           ),
         );
 
-        // Get presigned URL
-        const presigned = await getPresignedUpload(
-          workspaceId,
-          file.name,
-          file.type,
-        );
+        const formData = new FormData();
+        formData.append("file", file);
 
-        // Upload to S3 via presigned PUT URL
         const xhr = new XMLHttpRequest();
-        xhr.open("PUT", presigned.url);
-        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.open("POST", `/workspaces/${workspaceId}/uploads`);
+
+        const token = getAuthToken();
+        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
@@ -56,11 +52,8 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
             else reject(new Error(`Upload failed: ${xhr.status}`));
           };
           xhr.onerror = () => reject(new Error("Upload network error"));
-          xhr.send(file);
+          xhr.send(formData);
         });
-
-        // Notify API upload is complete
-        await completeUpload(workspaceId, presigned.key);
 
         setUploads((prev) =>
           prev.map((u, i) =>
@@ -70,7 +63,6 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
           ),
         );
 
-        // Refresh photos list
         queryClient.invalidateQueries({ queryKey: ["photos", workspaceId] });
       } catch (err) {
         setUploads((prev) =>
@@ -122,6 +114,7 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
   );
 
   const activeUploads = uploads.filter((u) => u.status !== "done");
+  const doneCount = uploads.filter((u) => u.status === "done").length;
 
   return (
     <div className="space-y-4">
@@ -168,6 +161,12 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
         />
       </div>
+
+      {doneCount > 0 && activeUploads.length === 0 && (
+        <p className="text-sm text-green-600">
+          {doneCount} photo{doneCount !== 1 ? "s" : ""} uploaded successfully
+        </p>
+      )}
 
       {/* Upload progress */}
       {activeUploads.length > 0 && (

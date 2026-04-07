@@ -49,6 +49,21 @@ export async function deleteObject(key: string): Promise<void> {
   );
 }
 
+export async function uploadBuffer(
+  key: string,
+  body: Buffer | Uint8Array,
+  contentType: string,
+): Promise<void> {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: config.s3.bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
+}
+
 export function getObjectUrl(key: string): string {
   const base = config.s3.endpoint ?? `https://s3.${config.s3.region}.amazonaws.com`;
   return `${base}/${config.s3.bucket}/${key}`;
