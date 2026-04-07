@@ -2,11 +2,56 @@
 
 import os
 import tempfile
+import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
 from PIL import Image, ExifTags
+
+
+def download_to_temp(url_or_path: str) -> str:
+    """Download a URL to a temporary file, or return the path if it is local.
+
+    Supports file paths, file:// URLs, http/https URLs (including S3 presigned).
+
+    Args:
+        url_or_path: A local file path or an HTTP(S) URL.
+
+    Returns:
+        Local file path to the downloaded or existing file.
+    """
+    parsed = urlparse(url_or_path)
+
+    # Local file path
+    if parsed.scheme in ("", "file"):
+        local_path = parsed.path if parsed.scheme == "file" else url_or_path
+        if os.path.isfile(local_path):
+            return local_path
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+
+    # HTTP(S) URL - download to temp file
+    if parsed.scheme in ("http", "https"):
+        suffix = _guess_extension(parsed.path)
+        fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        os.close(fd)
+        try:
+            urllib.request.urlretrieve(url_or_path, tmp_path)
+        except Exception as e:
+            os.unlink(tmp_path)
+            raise RuntimeError(f"Failed to download {url_or_path}: {e}") from e
+        return tmp_path
+
+    raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
+
+
+def _guess_extension(path: str) -> str:
+    """Guess file extension from URL path."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".glb", ".obj", ".ply", ".stl"):
+        return ext
+    return ".tmp"
 
 
 def normalize_orientation(image_path: str) -> str:
@@ -117,50 +162,11 @@ def detect_exposure_clipping(image_path: str) -> dict[str, float]:
     }
 
 
-def estimate_coverage(masks: list[str]) -> float:
-    """Compute viewpoint diversity score from a set of segmentation masks.
-
-    Uses the ratio of non-zero pixels and mask overlap to estimate how
-    well the photo set covers the subject from different angles.
-
-    Args:
-        masks: List of paths to binary mask images.
-
-    Returns:
-        Coverage score from 0.0 (poor) to 1.0 (excellent).
-    """
-    if not masks:
-        return 0.0
-
-    areas: list[float] = []
-    for mask_path in masks:
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            continue
-        area = float(np.sum(mask > 128)) / mask.size
-        areas.append(area)
-
-    if not areas:
-        return 0.0
-
-    # Score based on:
-    # 1. Average mask coverage (subject fills frame)
-    avg_coverage = np.mean(areas)
-
-    # 2. Variance in coverage (different viewpoints show different sizes)
-    variance = float(np.var(areas))
-    diversity_bonus = min(variance * 10, 0.3)
-
-    # 3. Number of views
-    view_bonus = min(len(areas) / 12.0, 0.3)
-
-    score = float(np.clip(avg_coverage + diversity_bonus + view_bonus, 0.0, 1.0))
-    return score
-
-
 def _temp_output(original_path: str, suffix: str) -> str:
     """Create a temporary output path based on the original file."""
     base, ext = os.path.splitext(os.path.basename(original_path))
+    if not ext:
+        ext = ".jpg"
     fd, path = tempfile.mkstemp(suffix=f"{suffix}{ext}")
     os.close(fd)
     return path

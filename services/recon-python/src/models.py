@@ -5,57 +5,68 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# --- Quality Check ---
+
+class QualityResult(BaseModel):
+    image_url: str = Field(..., description="URL of the checked image")
+    blur_score: float = Field(..., description="Laplacian variance blur score")
+    exposure_ok: bool = Field(True, description="Whether exposure is acceptable")
+    is_duplicate: bool = Field(False, description="Whether image is a duplicate")
+    quality_score: float = Field(..., description="Overall quality score 0-1")
+    is_accepted: bool = Field(..., description="Whether image passes quality gate")
+
+
+class QualityCheckRequest(BaseModel):
+    image_urls: list[str] = Field(..., description="List of image URLs to check")
+    blur_threshold: float = Field(100.0, description="Minimum acceptable blur score")
+
+
+class QualityCheckResponse(BaseModel):
+    results: list[QualityResult] = Field(..., description="Quality results per image")
+
+
 # --- Preprocess ---
 
 class PreprocessRequest(BaseModel):
     image_urls: list[str] = Field(..., description="List of image URLs to preprocess")
+    output_prefix: str = Field("processed", description="Prefix for output file names")
     max_size: int | None = Field(2048, description="Maximum image dimension in pixels")
 
 
 class PreprocessResponse(BaseModel):
-    processed_paths: list[str] = Field(..., description="Paths to processed images")
+    processed_urls: list[str] = Field(..., description="Paths/URLs to processed images")
+    mask_urls: list[str] = Field(default_factory=list, description="Paths/URLs to generated masks")
 
 
 # --- Segment ---
 
 class SegmentRequest(BaseModel):
-    image_urls: list[str] = Field(..., description="List of image paths to segment")
+    image_urls: list[str] = Field(..., description="List of image paths/URLs to segment")
 
 
 class SegmentResponse(BaseModel):
-    mask_paths: list[str] = Field(..., description="Paths to binary mask images")
-
-
-# --- Quality Check ---
-
-class QualityCheckRequest(BaseModel):
-    image_urls: list[str] = Field(..., description="List of image paths to check")
-    blur_threshold: float = Field(100.0, description="Minimum acceptable blur score")
-
-
-class QualityCheckResponse(BaseModel):
-    scores: list[float] = Field(..., description="Blur scores for each image")
-    passed: bool = Field(..., description="Whether all images passed quality checks")
-    issues: list[str] = Field(default_factory=list, description="List of quality issues found")
+    mask_urls: list[str] = Field(..., description="Paths to binary mask images")
 
 
 # --- Mesh Cleanup ---
 
-class MeshCleanupRequest(BaseModel):
-    s3_key: str = Field(..., description="S3 key of the mesh to clean up")
-    target_faces: int = Field(30000, description="Target face count after decimation")
+class CleanupMeshRequest(BaseModel):
+    mesh_url: str = Field(..., description="Path or URL of the mesh to clean up")
+    target_faces: int | None = Field(30000, description="Target face count after decimation")
 
 
-class MeshCleanupResponse(BaseModel):
-    cleaned_s3_key: str = Field(..., description="S3 key of the cleaned mesh")
+class CleanupMeshResponse(BaseModel):
+    cleaned_mesh_url: str = Field(..., description="Path/URL of the cleaned mesh")
+    vertex_count: int = Field(..., description="Number of vertices in cleaned mesh")
+    face_count: int = Field(..., description="Number of faces in cleaned mesh")
     bounds: dict[str, Any] = Field(default_factory=dict, description="Bounding box of cleaned mesh")
 
 
 # --- Skeleton Extraction ---
 
-class SkeletonExtractionRequest(BaseModel):
-    s3_key: str = Field(..., description="S3 key of the mesh for skeleton extraction")
+class ExtractSkeletonRequest(BaseModel):
+    mesh_url: str = Field(..., description="Path or URL of the mesh for skeleton extraction")
 
 
-class SkeletonExtractionResponse(BaseModel):
-    skeleton: dict[str, Any] = Field(..., description="Branch graph skeleton data")
+class ExtractSkeletonResponse(BaseModel):
+    skeleton: dict[str, Any] = Field(..., description="Skeleton JSON with nodes, edges, root_id")

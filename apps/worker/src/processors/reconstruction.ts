@@ -1,26 +1,15 @@
 import type { Job } from "bullmq";
 import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-} from "@aws-sdk/client-s3";
+  qualityCheck,
+  preprocess,
+  segmentImages,
+  cleanupMesh,
+  extractSkeleton,
+} from "../lib/recon-service.js";
+import { uploadToS3 } from "../lib/storage.js";
 
-const RECON_PYTHON_URL =
-  process.env.RECON_PYTHON_URL ?? "http://localhost:8000";
 const MESHY_API_KEY = process.env.MESHY_API_KEY ?? "";
 const MESHY_API_URL = "https://api.meshy.ai/v2";
-
-const s3 = new S3Client({
-  endpoint: process.env.S3_ENDPOINT ?? "http://localhost:9000",
-  region: process.env.S3_REGION ?? "us-east-1",
-  credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY ?? "minioadmin",
-    secretAccessKey: process.env.S3_SECRET_KEY ?? "minioadmin",
-  },
-  forcePathStyle: true,
-});
-
-const S3_BUCKET = process.env.S3_BUCKET ?? "bonsai3d";
 
 interface ReconstructionJobData {
   workspaceId: string;
@@ -52,27 +41,31 @@ const STAGES: Stage[] = [
   "generate_thumbnails",
 ];
 
-async function callPython(
-  endpoint: string,
-  body: Record<string, unknown>,
-): Promise<unknown> {
-  const res = await fetch(`${RECON_PYTHON_URL}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Python service ${endpoint} failed (${res.status}): ${text}`);
-  }
-  return res.json();
-}
-
 async function updateProgress(job: Job, stage: Stage, message: string) {
   const stageIndex = STAGES.indexOf(stage);
   const progress = Math.round(((stageIndex + 1) / STAGES.length) * 100);
   await job.updateProgress(progress);
   await job.log(`[${stage}] ${message}`);
+}
+
+async function callMeshyApi(
+  method: string,
+  path: string,
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  const res = await fetch(`${MESHY_API_URL}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Meshy API ${path} failed (${res.status}): ${text}`);
+  }
+  return res.json();
 }
 
 export async function processReconstruction(job: Job): Promise<void> {
@@ -82,9 +75,7 @@ export async function processReconstruction(job: Job): Promise<void> {
   try {
     // Stage 1: Photo quality assessment
     await updateProgress(job, "photo_qa", "Checking photo quality...");
-    const qaResult = (await callPython("/quality-check", {
-      image_urls: photoUrls,
-    })) as { scores: number[]; passed: boolean; issues: string[] };
+    const qaResult = await qualityCheck(photoUrls);
 
     if (!qaResult.passed) {
       throw new Error(
@@ -94,14 +85,10 @@ export async function processReconstruction(job: Job): Promise<void> {
 
     // Stage 2: Preprocess images
     await updateProgress(job, "preprocess_images", "Preprocessing images...");
-    const preprocessed = (await callPython("/preprocess", {
-      image_urls: photoUrls,
-    })) as { processed_paths: string[] };
+    const preprocessed = await preprocess(photoUrls);
 
     // Segmentation pass
-    const segmented = (await callPython("/segment", {
-      image_urls: preprocessed.processed_paths,
-    })) as { mask_paths: string[] };
+    await segmentImages(preprocessed.processed_paths);
 
     // Stage 3: Submit to reconstruction provider
     await updateProgress(
@@ -109,25 +96,39 @@ export async function processReconstruction(job: Job): Promise<void> {
       "submit_reconstruction",
       "Submitting to reconstruction service...",
     );
-    const meshyRes = await fetch(`${MESHY_API_URL}/image-to-3d`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${MESHY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        image_urls: preprocessed.processed_paths,
-        mode: "refine",
-        topology: "quad",
-        target_polycount: 50000,
-      }),
-    });
 
-    if (!meshyRes.ok) {
-      throw new Error(`Meshy API submission failed: ${meshyRes.status}`);
+    if (!MESHY_API_KEY) {
+      await job.log(
+        "[submit_reconstruction] No MESHY_API_KEY set — skipping Meshy submission",
+      );
+      // In dev/test without an API key, skip the Meshy stages
+      await updateProgress(
+        job,
+        "publish_workspace",
+        "Skipping reconstruction (no API key) — publishing workspace...",
+      );
+      await job.log(
+        `[publish_workspace] Workspace ${workspaceId} — no model generated (no API key)`,
+      );
+      await updateProgress(
+        job,
+        "generate_thumbnails",
+        "Would generate thumbnails (placeholder)",
+      );
+      await job.log(
+        `[generate_thumbnails] Thumbnail generation skipped (no model)`,
+      );
+      await job.updateProgress(100);
+      return;
     }
 
-    const meshyJob = (await meshyRes.json()) as { result: string };
+    const meshyJob = (await callMeshyApi("POST", "/image-to-3d", {
+      image_urls: preprocessed.processed_paths,
+      mode: "refine",
+      topology: "quad",
+      target_polycount: 50000,
+    })) as { result: string };
+
     const meshyTaskId = meshyJob.result;
 
     // Stage 4: Poll reconstruction
@@ -144,13 +145,10 @@ export async function processReconstruction(job: Job): Promise<void> {
 
     while (meshyStatus !== "SUCCEEDED" && pollCount < maxPolls) {
       await new Promise((resolve) => setTimeout(resolve, 10_000));
-      const pollRes = await fetch(
-        `${MESHY_API_URL}/image-to-3d/${meshyTaskId}`,
-        {
-          headers: { Authorization: `Bearer ${MESHY_API_KEY}` },
-        },
-      );
-      const pollData = (await pollRes.json()) as {
+      const pollData = (await callMeshyApi(
+        "GET",
+        `/image-to-3d/${meshyTaskId}`,
+      )) as {
         status: string;
         model_urls?: { glb: string; obj: string };
         progress: number;
@@ -185,14 +183,7 @@ export async function processReconstruction(job: Job): Promise<void> {
     const glbBuffer = Buffer.from(await glbRes.arrayBuffer());
 
     const s3Key = `workspaces/${workspaceId}/models/original.glb`;
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: S3_BUCKET,
-        Key: s3Key,
-        Body: glbBuffer,
-        ContentType: "model/gltf-binary",
-      }),
-    );
+    await uploadToS3(s3Key, glbBuffer, "model/gltf-binary");
 
     // Stage 6: Cleanup geometry
     await updateProgress(
@@ -200,10 +191,7 @@ export async function processReconstruction(job: Job): Promise<void> {
       "cleanup_geometry",
       "Cleaning up mesh geometry...",
     );
-    const cleaned = (await callPython("/cleanup-mesh", {
-      s3_key: s3Key,
-      target_faces: 30000,
-    })) as { cleaned_s3_key: string };
+    const cleaned = await cleanupMesh(s3Key);
 
     // Stage 7: Extract skeleton
     await updateProgress(
@@ -211,19 +199,14 @@ export async function processReconstruction(job: Job): Promise<void> {
       "extract_skeleton",
       "Extracting branch skeleton...",
     );
-    const skeleton = (await callPython("/extract-skeleton", {
-      s3_key: cleaned.cleaned_s3_key,
-    })) as { skeleton: unknown };
+    const skeleton = await extractSkeleton(cleaned.cleaned_s3_key);
 
     // Store skeleton data
     const skeletonKey = `workspaces/${workspaceId}/models/skeleton.json`;
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: S3_BUCKET,
-        Key: skeletonKey,
-        Body: JSON.stringify(skeleton.skeleton),
-        ContentType: "application/json",
-      }),
+    await uploadToS3(
+      skeletonKey,
+      JSON.stringify(skeleton.skeleton),
+      "application/json",
     );
 
     // Stage 8: Publish workspace
@@ -233,7 +216,7 @@ export async function processReconstruction(job: Job): Promise<void> {
       "Publishing workspace...",
     );
     // TODO: Update workspace status in database to 'ready'
-    // TODO: Set original model asset reference
+    // TODO: Set originalModelAssetId in DB
     await job.log(
       `[publish_workspace] Workspace ${workspaceId} model at ${cleaned.cleaned_s3_key}`,
     );
@@ -247,7 +230,7 @@ export async function processReconstruction(job: Job): Promise<void> {
     // TODO: Render thumbnail images from 3D model
     const thumbnailKey = `workspaces/${workspaceId}/thumbnails/preview.png`;
     await job.log(
-      `[generate_thumbnails] Thumbnail placeholder at ${thumbnailKey}`,
+      `[generate_thumbnails] Would generate thumbnail at ${thumbnailKey} (placeholder)`,
     );
 
     await job.updateProgress(100);

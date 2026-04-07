@@ -2,21 +2,84 @@
 // API client – thin wrappers around fetch that talk to the backend at /api
 // ---------------------------------------------------------------------------
 
-const BASE = "/api";
+// In dev mode with the Vite proxy, "/api" is proxied to the backend.
+// In production or when VITE_API_URL is set without a proxy, use the full URL.
+const BASE = import.meta.env.DEV ? "/api" : (import.meta.env.VITE_API_URL ?? "") + "/api";
+
+// ---- Auth token helpers ---------------------------------------------------
+
+const TOKEN_KEY = "bonsai_auth_token";
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setAuthToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+// ---- Core request helper --------------------------------------------------
 
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers,
   });
+
+  if (res.status === 401) {
+    clearAuthToken();
+    window.location.href = "/auth";
+    throw new Error("Unauthorized");
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${body}`);
   }
+
+  // Handle 204 No Content
+  if (res.status === 204) return undefined as T;
+
   return res.json() as Promise<T>;
+}
+
+// ---- Auth -----------------------------------------------------------------
+
+export interface AuthResponse {
+  token: string;
+  user: { id: string; email: string };
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  const data = await request<AuthResponse>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  setAuthToken(data.token);
+  return data;
+}
+
+export async function register(email: string, password: string): Promise<AuthResponse> {
+  const data = await request<AuthResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  setAuthToken(data.token);
+  return data;
 }
 
 // ---- Types ----------------------------------------------------------------

@@ -25,9 +25,20 @@ export async function authPlugin(app: FastifyInstance) {
 
   app.decorateRequest("userId", "");
 
+  const isDevMode = config.jwtSecret === "dev-secret-change-in-production";
+
   app.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
-    // Skip auth for health check
-    if (request.url === "/health") return;
+    // Skip auth for health check and auth routes
+    if (request.url === "/health" || request.url.startsWith("/auth/")) return;
+
+    // Dev bypass: allow x-dev-user-id header when using dev secret
+    if (isDevMode) {
+      const devUserId = request.headers["x-dev-user-id"] as string | undefined;
+      if (devUserId) {
+        request.userId = devUserId;
+        return;
+      }
+    }
 
     try {
       const decoded = await request.jwtVerify<JwtPayload>();

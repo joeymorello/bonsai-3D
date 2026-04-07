@@ -7,6 +7,7 @@ import { uploadRoutes } from "./routes/uploads.js";
 import { reconstructionRoutes } from "./routes/reconstruction.js";
 import { variationRoutes } from "./routes/variations.js";
 import { assetRoutes } from "./routes/assets.js";
+import { authRoutes } from "./routes/auth.js";
 
 const app = Fastify({ logger: true });
 
@@ -20,6 +21,7 @@ await app.register(cors, { origin: true });
 await app.register(authPlugin);
 
 // Routes
+await app.register(authRoutes);
 await app.register(workspaceRoutes);
 await app.register(uploadRoutes);
 await app.register(reconstructionRoutes);

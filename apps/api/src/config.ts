@@ -12,15 +12,16 @@ function optional(key: string, fallback: string): string {
 
 export const config = {
   port: Number(optional("PORT", "3001")),
-  databaseUrl: required("DATABASE_URL"),
+  databaseUrl: optional("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/bonsai3d"),
   redisUrl: optional("REDIS_URL", "redis://localhost:6379"),
   s3: {
-    bucket: required("S3_BUCKET"),
-    endpoint: process.env["S3_ENDPOINT"],
+    bucket: optional("S3_BUCKET", "bonsai3d"),
+    endpoint: optional("S3_ENDPOINT", "http://localhost:9000"),
     region: optional("S3_REGION", "us-east-1"),
-    accessKey: required("S3_ACCESS_KEY"),
-    secretKey: required("S3_SECRET_KEY"),
+    accessKey: optional("S3_ACCESS_KEY", "minioadmin"),
+    secretKey: optional("S3_SECRET_KEY", "minioadmin"),
   },
-  meshyApiKey: required("MESHY_API_KEY"),
-  jwtSecret: required("JWT_SECRET"),
+  meshyApiKey: optional("MESHY_API_KEY", "placeholder"),
+  jwtSecret: optional("JWT_SECRET", "dev-secret-change-in-production"),
+  reconServiceUrl: optional("RECON_SERVICE_URL", "http://localhost:8000"),
 } as const;

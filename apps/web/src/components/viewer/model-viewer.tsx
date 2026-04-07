@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useLoader } from "@react-three/fiber";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { useGLTF } from "@react-three/drei";
 import type { Group, Mesh, Material } from "three";
 import { MeshStandardMaterial } from "three";
 
@@ -10,7 +9,7 @@ interface ModelViewerProps {
 }
 
 export function ModelViewer({ url, wireframe = false }: ModelViewerProps) {
-  const gltf = useLoader(GLTFLoader, url);
+  const { scene } = useGLTF(url);
   const groupRef = useRef<Group>(null);
 
   useEffect(() => {
@@ -36,10 +35,12 @@ export function ModelViewer({ url, wireframe = false }: ModelViewerProps) {
     });
   }, [wireframe]);
 
+  if (!url) return null;
+
   return (
     <primitive
       ref={groupRef}
-      object={gltf.scene.clone(true)}
+      object={scene.clone(true)}
       dispose={null}
     />
   );
