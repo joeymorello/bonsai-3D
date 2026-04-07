@@ -20,7 +20,7 @@ export function CreateWorkspace() {
     if (!name.trim()) return;
     mutation.mutate({
       name: name.trim(),
-      species: species.trim() || undefined,
+      speciesGuess: species.trim() || undefined,
     });
   }
 

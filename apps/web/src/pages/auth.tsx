@@ -5,19 +5,18 @@ import { login, register } from "@/lib/api";
 export function AuthPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleAuth(mode: "login" | "register") {
-    if (!email.trim() || !password.trim()) return;
+    if (!email.trim()) return;
     setError(null);
     setLoading(true);
     try {
       if (mode === "login") {
-        await login(email.trim(), password.trim());
+        await login(email.trim());
       } else {
-        await register(email.trim(), password.trim());
+        await register(email.trim());
       }
       navigate("/");
     } catch (err) {
@@ -59,27 +58,6 @@ export function AuthPage() {
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleAuth("login");
-              }}
-            />
-          </div>
-
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
@@ -89,14 +67,14 @@ export function AuthPage() {
           <div className="flex gap-3">
             <button
               onClick={() => handleAuth("login")}
-              disabled={loading || !email.trim() || !password.trim()}
+              disabled={loading || !email.trim()}
               className="flex-1 rounded-lg bg-green-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "..." : "Log In"}
             </button>
             <button
               onClick={() => handleAuth("register")}
-              disabled={loading || !email.trim() || !password.trim()}
+              disabled={loading || !email.trim()}
               className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "..." : "Register"}

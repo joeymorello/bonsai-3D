@@ -20,6 +20,8 @@ export function WorkspaceView() {
     queryKey: ["workspace", id],
     queryFn: () => getWorkspace(id!),
     enabled: !!id,
+    refetchInterval: (query) =>
+      query.state.data?.status === "processing" ? 3000 : false,
   });
 
   const { data: photos } = useQuery({
@@ -87,7 +89,9 @@ export function WorkspaceView() {
                   ? "bg-green-100 text-green-700"
                   : workspace.status === "processing"
                     ? "bg-yellow-100 text-yellow-800"
-                    : "bg-gray-200 text-gray-700"
+                    : workspace.status === "failed"
+                      ? "bg-red-100 text-red-700"
+                      : "bg-gray-200 text-gray-700"
               }`}
             >
               {workspace.status}

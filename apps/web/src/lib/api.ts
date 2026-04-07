@@ -64,19 +64,19 @@ export interface AuthResponse {
   user: { id: string; email: string };
 }
 
-export async function login(email: string, password: string): Promise<AuthResponse> {
+export async function login(email: string): Promise<AuthResponse> {
   const data = await request<AuthResponse>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email }),
   });
   setAuthToken(data.token);
   return data;
 }
 
-export async function register(email: string, password: string): Promise<AuthResponse> {
+export async function register(email: string): Promise<AuthResponse> {
   const data = await request<AuthResponse>("/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email }),
   });
   setAuthToken(data.token);
   return data;
@@ -86,11 +86,12 @@ export async function register(email: string, password: string): Promise<AuthRes
 
 export interface Workspace {
   id: string;
+  userId: string;
   name: string;
-  species: string | null;
-  status: "created" | "uploading" | "processing" | "ready" | "error";
-  coverUrl: string | null;
-  photoCount: number;
+  speciesGuess: string | null;
+  status: "draft" | "uploading" | "processing" | "ready" | "failed";
+  coverImageUrl: string | null;
+  originalModelAssetId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,9 +106,8 @@ export interface Photo {
 }
 
 export interface PresignedUpload {
-  uploadId: string;
   url: string;
-  fields: Record<string, string>;
+  key: string;
 }
 
 export interface ReconstructionStatus {
@@ -152,7 +152,7 @@ export function getWorkspace(id: string): Promise<Workspace> {
 
 export function createWorkspace(data: {
   name: string;
-  species?: string;
+  speciesGuess?: string;
 }): Promise<Workspace> {
   return request<Workspace>("/workspaces", {
     method: "POST",
@@ -176,7 +176,7 @@ export function getPresignedUpload(
   contentType: string,
 ): Promise<PresignedUpload> {
   return request<PresignedUpload>(
-    `/workspaces/${workspaceId}/photos/presign`,
+    `/workspaces/${workspaceId}/uploads/presign`,
     {
       method: "POST",
       body: JSON.stringify({ filename, contentType }),
@@ -186,11 +186,11 @@ export function getPresignedUpload(
 
 export function completeUpload(
   workspaceId: string,
-  uploadId: string,
+  storageKey: string,
 ): Promise<Photo> {
-  return request<Photo>(`/workspaces/${workspaceId}/photos/complete`, {
+  return request<Photo>(`/workspaces/${workspaceId}/uploads/complete`, {
     method: "POST",
-    body: JSON.stringify({ uploadId }),
+    body: JSON.stringify({ storageKey }),
   });
 }
 
@@ -206,7 +206,7 @@ export function getReconstructionStatus(
   workspaceId: string,
 ): Promise<ReconstructionStatus> {
   return request<ReconstructionStatus>(
-    `/workspaces/${workspaceId}/reconstruct/status`,
+    `/workspaces/${workspaceId}/reconstruction-status`,
   );
 }
 
@@ -217,11 +217,10 @@ export function listVariations(workspaceId: string): Promise<Variation[]> {
 }
 
 export function getVariation(
-  workspaceId: string,
   variationId: string,
 ): Promise<Variation> {
   return request<Variation>(
-    `/workspaces/${workspaceId}/variations/${variationId}`,
+    `/variations/${variationId}`,
   );
 }
 
@@ -236,12 +235,11 @@ export function createVariation(
 }
 
 export function addOperation(
-  workspaceId: string,
   variationId: string,
   operation: BranchOperation,
 ): Promise<Variation> {
   return request<Variation>(
-    `/workspaces/${workspaceId}/variations/${variationId}/operations`,
+    `/variations/${variationId}/operations`,
     {
       method: "POST",
       body: JSON.stringify(operation),
@@ -250,22 +248,20 @@ export function addOperation(
 }
 
 export function deleteVariation(
-  workspaceId: string,
   variationId: string,
 ): Promise<void> {
   return request<void>(
-    `/workspaces/${workspaceId}/variations/${variationId}`,
+    `/variations/${variationId}`,
     { method: "DELETE" },
   );
 }
 
 export function exportVariation(
-  workspaceId: string,
   variationId: string,
   format: "glb" | "obj" | "usdz" = "glb",
 ): Promise<{ downloadUrl: string }> {
   return request<{ downloadUrl: string }>(
-    `/workspaces/${workspaceId}/variations/${variationId}/export`,
+    `/variations/${variationId}/export`,
     {
       method: "POST",
       body: JSON.stringify({ format }),
@@ -275,15 +271,14 @@ export function exportVariation(
 
 // ---- Assets ---------------------------------------------------------------
 
-export function getAssetManifest(workspaceId: string): Promise<AssetManifest> {
-  return request<AssetManifest>(`/workspaces/${workspaceId}/assets/manifest`);
+export function getAssetManifest(assetId: string): Promise<AssetManifest> {
+  return request<AssetManifest>(`/assets/${assetId}/manifest`);
 }
 
 export function getDownloadUrl(
-  workspaceId: string,
-  assetPath: string,
+  assetId: string,
 ): Promise<{ url: string }> {
   return request<{ url: string }>(
-    `/workspaces/${workspaceId}/assets/download?path=${encodeURIComponent(assetPath)}`,
+    `/assets/${assetId}/download-url`,
   );
 }

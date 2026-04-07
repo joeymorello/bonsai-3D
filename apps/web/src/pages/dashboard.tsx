@@ -4,11 +4,11 @@ import { listWorkspaces } from "@/lib/api";
 import type { Workspace } from "@/lib/api";
 
 const STATUS_COLORS: Record<Workspace["status"], string> = {
-  created: "bg-gray-200 text-gray-700",
+  draft: "bg-gray-200 text-gray-700",
   uploading: "bg-blue-100 text-blue-700",
   processing: "bg-yellow-100 text-yellow-800",
   ready: "bg-green-100 text-green-700",
-  error: "bg-red-100 text-red-700",
+  failed: "bg-red-100 text-red-700",
 };
 
 function StatusBadge({ status }: { status: Workspace["status"] }) {
@@ -28,9 +28,9 @@ function WorkspaceCard({ workspace }: { workspace: Workspace }) {
       className="group block overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md"
     >
       <div className="aspect-video w-full bg-gray-100">
-        {workspace.coverUrl ? (
+        {workspace.coverImageUrl ? (
           <img
-            src={workspace.coverUrl}
+            src={workspace.coverImageUrl}
             alt={workspace.name}
             className="h-full w-full object-cover"
           />
@@ -61,7 +61,6 @@ function WorkspaceCard({ workspace }: { workspace: Workspace }) {
           <StatusBadge status={workspace.status} />
         </div>
         <p className="mt-1 text-xs text-gray-500">
-          {workspace.photoCount} photo{workspace.photoCount !== 1 ? "s" : ""} &middot;{" "}
           {new Date(workspace.createdAt).toLocaleDateString()}
         </p>
       </div>

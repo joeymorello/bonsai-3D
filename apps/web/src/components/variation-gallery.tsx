@@ -26,7 +26,7 @@ export function VariationGallery({
 
   const deleteMutation = useMutation({
     mutationFn: (variationId: string) =>
-      deleteVariation(workspaceId, variationId),
+      deleteVariation(variationId),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["variations", workspaceId],

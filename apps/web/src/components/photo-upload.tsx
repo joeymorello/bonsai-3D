@@ -36,15 +36,10 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
           file.type,
         );
 
-        // Upload to S3
-        const formData = new FormData();
-        for (const [key, value] of Object.entries(presigned.fields)) {
-          formData.append(key, value);
-        }
-        formData.append("file", file);
-
+        // Upload to S3 via presigned PUT URL
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", presigned.url);
+        xhr.open("PUT", presigned.url);
+        xhr.setRequestHeader("Content-Type", file.type);
 
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
@@ -61,11 +56,11 @@ export function PhotoUpload({ workspaceId }: PhotoUploadProps) {
             else reject(new Error(`Upload failed: ${xhr.status}`));
           };
           xhr.onerror = () => reject(new Error("Upload network error"));
-          xhr.send(formData);
+          xhr.send(file);
         });
 
         // Notify API upload is complete
-        await completeUpload(workspaceId, presigned.uploadId);
+        await completeUpload(workspaceId, presigned.key);
 
         setUploads((prev) =>
           prev.map((u, i) =>

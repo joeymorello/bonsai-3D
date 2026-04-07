@@ -72,9 +72,9 @@ export function Editor() {
             <p className="mt-1 truncate text-sm text-gray-200">
               {workspace?.name}
             </p>
-            {workspace?.species && (
+            {workspace?.speciesGuess && (
               <p className="text-xs italic text-gray-500">
-                {workspace.species}
+                {workspace.speciesGuess}
               </p>
             )}
           </div>
