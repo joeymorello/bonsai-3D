@@ -23,7 +23,7 @@ export function bendBranch(
 
   // Move the target control point
   if (handleIndex >= 0 && handleIndex < branch.curvePoints.length) {
-    branch.curvePoints[handleIndex].add(deltaVec);
+    branch.curvePoints[handleIndex]!.add(deltaVec);
 
     // Smoothly attenuate the displacement to neighboring control points
     const falloff = 0.5;
@@ -32,10 +32,10 @@ export function bendBranch(
       const scaledDelta = deltaVec.clone().multiplyScalar(weight);
 
       if (handleIndex + i < branch.curvePoints.length) {
-        branch.curvePoints[handleIndex + i].add(scaledDelta);
+        branch.curvePoints[handleIndex + i]!.add(scaledDelta);
       }
       if (handleIndex - i >= 0) {
-        branch.curvePoints[handleIndex - i].add(scaledDelta);
+        branch.curvePoints[handleIndex - i]!.add(scaledDelta);
       }
     }
   }
@@ -68,7 +68,7 @@ export function rotateBranch(
   const quaternion = new Quaternion().setFromAxisAngle(axisVec, angle);
 
   // Pivot point is the first control point (attachment to parent)
-  const pivot = branch.curvePoints[0].clone();
+  const pivot = branch.curvePoints[0]!.clone();
 
   // Rotate all control points around the pivot
   for (const point of branch.curvePoints) {

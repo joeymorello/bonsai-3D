@@ -128,7 +128,7 @@ export interface UpdateWorkspaceRequest {
 
 export interface UploadPhotosRequest {
   workspaceId: string;
-  photos: File[];
+  photos: Blob[];
 }
 
 export interface StartReconstructionRequest {

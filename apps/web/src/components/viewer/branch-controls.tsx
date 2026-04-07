@@ -1,6 +1,6 @@
 import { useRef, useCallback } from "react";
 import { TransformControls } from "@react-three/drei";
-import type { Object3D } from "three";
+import type { Mesh } from "three";
 import { useEditorStore } from "@/stores/editor-store";
 
 interface BranchControlsProps {
@@ -14,7 +14,7 @@ export function BranchControls({
   handleIndex,
   position,
 }: BranchControlsProps) {
-  const objRef = useRef<Object3D>(null);
+  const objRef = useRef<Mesh>(null);
   const activeTool = useEditorStore((s) => s.tool.activeTool);
   const bendBranch = useEditorStore((s) => s.bendBranch);
 
