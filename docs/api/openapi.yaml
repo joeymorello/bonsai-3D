@@ -1,0 +1,859 @@
+openapi: "3.0.3"
+
+info:
+  title: bonsai-3D API
+  version: "1.0.0"
+  description: REST API for the bonsai-3D workspace, reconstruction, and style-variation pipeline.
+
+servers:
+  - url: /api/v1
+    description: Default server
+
+# ──────────────────────────── Security ────────────────────────────
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  # ──────────────────────────── Schemas ────────────────────────────
+
+  schemas:
+    # ── Enums ──
+
+    WorkspaceStatus:
+      type: string
+      enum: [draft, uploading, processing, ready, failed]
+
+    ReconstructionProvider:
+      type: string
+      enum: [meshy, hunyuan, trellis, photogrammetry]
+
+    ReconstructionStep:
+      type: string
+      enum: [ingest, segment, reconstruct, clean, skeletonize, publish]
+
+    ModelAssetKind:
+      type: string
+      enum: [original_mesh, cleaned_mesh, point_cloud, skeleton, foliage_mask, thumbnail, preview_glb]
+
+    EditOperationType:
+      type: string
+      enum: [bend_branch, rotate_branch, translate_branch, prune_segment, hide_leaf_cluster]
+
+    # ── Domain models ──
+
+    Workspace:
+      type: object
+      required: [id, userId, name, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        speciesGuess:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/WorkspaceStatus"
+        coverImageUrl:
+          type: string
+          nullable: true
+        originalModelAssetId:
+          type: string
+          format: uuid
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UploadPhoto:
+      type: object
+      required: [id, workspaceId, storageKey]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        storageKey:
+          type: string
+        cameraAngleHint:
+          type: string
+          nullable: true
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        exif:
+          type: object
+          nullable: true
+        qualityScore:
+          type: number
+          format: float
+          nullable: true
+        isAccepted:
+          type: boolean
+
+    ReconstructionJob:
+      type: object
+      required: [id, workspaceId, provider, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        provider:
+          $ref: "#/components/schemas/ReconstructionProvider"
+        status:
+          type: string
+          description: "Job status (e.g. pending, running, completed, failed)"
+        step:
+          $ref: "#/components/schemas/ReconstructionStep"
+        providerJobId:
+          type: string
+          nullable: true
+        logs:
+          type: string
+          nullable: true
+        metricsJson:
+          type: object
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ModelAsset:
+      type: object
+      required: [id, workspaceId, kind, storageKey, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/ModelAssetKind"
+        storageKey:
+          type: string
+        format:
+          type: string
+          nullable: true
+        version:
+          type: integer
+        metadataJson:
+          type: object
+          nullable: true
+
+    StyleVariation:
+      type: object
+      required: [id, workspaceId, name, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        basedOnModelAssetId:
+          type: string
+          format: uuid
+          nullable: true
+        snapshotAssetId:
+          type: string
+          format: uuid
+          nullable: true
+        editScriptJson:
+          type: object
+          nullable: true
+        thumbnailUrl:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    EditOperation:
+      type: object
+      required: [id, variationId, type, timestamp]
+      properties:
+        id:
+          type: string
+          format: uuid
+        variationId:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/EditOperationType"
+        payloadJson:
+          type: object
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    # ── Request bodies ──
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        speciesGuess:
+          type: string
+
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        speciesGuess:
+          type: string
+
+    PresignRequest:
+      type: object
+      required: [filename, contentType]
+      properties:
+        filename:
+          type: string
+        contentType:
+          type: string
+
+    PresignResponse:
+      type: object
+      required: [url, storageKey]
+      properties:
+        url:
+          type: string
+          description: Presigned S3 upload URL.
+        storageKey:
+          type: string
+          description: Storage key to reference in the complete call.
+
+    CompleteUploadRequest:
+      type: object
+      required: [storageKey, width, height]
+      properties:
+        storageKey:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        exif:
+          type: object
+
+    StartReconstructionRequest:
+      type: object
+      properties:
+        provider:
+          $ref: "#/components/schemas/ReconstructionProvider"
+
+    CreateVariationRequest:
+      type: object
+      required: [name, basedOnModelAssetId]
+      properties:
+        name:
+          type: string
+        basedOnModelAssetId:
+          type: string
+          format: uuid
+
+    UpdateVariationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        editScriptJson:
+          type: object
+
+    AddEditOperationRequest:
+      type: object
+      required: [type, payloadJson]
+      properties:
+        type:
+          $ref: "#/components/schemas/EditOperationType"
+        payloadJson:
+          type: object
+
+    AssetManifest:
+      type: object
+      required: [id, kind, format, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/ModelAssetKind"
+        format:
+          type: string
+          nullable: true
+        version:
+          type: integer
+        metadataJson:
+          type: object
+          nullable: true
+
+    DownloadUrlResponse:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: Presigned download URL.
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+
+# ──────────────────────────── Paths ────────────────────────────
+
+paths:
+
+  # ── Workspaces ──
+
+  /workspaces:
+    post:
+      tags: [Workspaces]
+      summary: Create a workspace
+      operationId: createWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkspaceRequest"
+      responses:
+        "201":
+          description: Workspace created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+
+    get:
+      tags: [Workspaces]
+      summary: List current user's workspaces
+      operationId: listWorkspaces
+      responses:
+        "200":
+          description: List of workspaces.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workspace"
+        "401":
+          description: Unauthorized.
+
+  /workspaces/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Workspaces]
+      summary: Get workspace details
+      operationId: getWorkspace
+      responses:
+        "200":
+          description: Workspace details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+    patch:
+      tags: [Workspaces]
+      summary: Update a workspace
+      operationId: updateWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkspaceRequest"
+      responses:
+        "200":
+          description: Workspace updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+    delete:
+      tags: [Workspaces]
+      summary: Delete a workspace
+      operationId: deleteWorkspace
+      responses:
+        "204":
+          description: Workspace deleted.
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  # ── Uploads ──
+
+  /workspaces/{id}/uploads/presign:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Uploads]
+      summary: Get a presigned S3 upload URL
+      operationId: presignUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PresignRequest"
+      responses:
+        "200":
+          description: Presigned URL returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignResponse"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  /workspaces/{id}/uploads/complete:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Uploads]
+      summary: Record a completed upload
+      operationId: completeUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadRequest"
+      responses:
+        "201":
+          description: Photo record created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadPhoto"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  /workspaces/{id}/photos:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Uploads]
+      summary: List photos for a workspace
+      operationId: listPhotos
+      responses:
+        "200":
+          description: List of photos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UploadPhoto"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  # ── Reconstruction ──
+
+  /workspaces/{id}/reconstruct:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Reconstruction]
+      summary: Start a reconstruction job
+      operationId: startReconstruction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartReconstructionRequest"
+      responses:
+        "202":
+          description: Reconstruction job started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconstructionJob"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  /workspaces/{id}/reconstruction-status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Reconstruction]
+      summary: Get reconstruction job status
+      operationId: getReconstructionStatus
+      responses:
+        "200":
+          description: Current reconstruction status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconstructionJob"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace or job not found.
+
+  # ── Variations ──
+
+  /workspaces/{id}/variations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Variations]
+      summary: Create a style variation
+      operationId: createVariation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariationRequest"
+      responses:
+        "201":
+          description: Variation created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StyleVariation"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+    get:
+      tags: [Variations]
+      summary: List variations for a workspace
+      operationId: listVariations
+      responses:
+        "200":
+          description: List of variations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StyleVariation"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Workspace not found.
+
+  /variations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Variations]
+      summary: Get a variation
+      operationId: getVariation
+      responses:
+        "200":
+          description: Variation details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StyleVariation"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Variation not found.
+
+    patch:
+      tags: [Variations]
+      summary: Update a variation
+      operationId: updateVariation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariationRequest"
+      responses:
+        "200":
+          description: Variation updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StyleVariation"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Variation not found.
+
+    delete:
+      tags: [Variations]
+      summary: Delete a variation
+      operationId: deleteVariation
+      responses:
+        "204":
+          description: Variation deleted.
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Variation not found.
+
+  /variations/{id}/operations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Variations]
+      summary: Add an edit operation to a variation
+      operationId: addEditOperation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddEditOperationRequest"
+      responses:
+        "201":
+          description: Edit operation added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EditOperation"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Variation not found.
+
+  /variations/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      tags: [Variations]
+      summary: Trigger an export of the variation
+      operationId: exportVariation
+      responses:
+        "202":
+          description: Export triggered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId:
+                    type: string
+                    format: uuid
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Variation not found.
+
+  # ── Assets ──
+
+  /assets/{id}/manifest:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Assets]
+      summary: Get asset metadata / manifest
+      operationId: getAssetManifest
+      responses:
+        "200":
+          description: Asset manifest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetManifest"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Asset not found.
+
+  /assets/{id}/download-url:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      tags: [Assets]
+      summary: Get a presigned download URL for an asset
+      operationId: getAssetDownloadUrl
+      responses:
+        "200":
+          description: Presigned download URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadUrlResponse"
+        "401":
+          description: Unauthorized.
+        "404":
+          description: Asset not found.
