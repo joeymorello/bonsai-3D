@@ -1,6 +1,10 @@
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyJwt from "@fastify/jwt";
+import fastifyStatic from "@fastify/static";
 import { config } from "./config.js";
 import type { JwtPayload } from "./middleware/auth.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
@@ -9,6 +13,8 @@ import { reconstructionRoutes } from "./routes/reconstruction.js";
 import { variationRoutes } from "./routes/variations.js";
 import { assetRoutes } from "./routes/assets.js";
 import { authRoutes } from "./routes/auth.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -29,7 +35,7 @@ const app = Fastify({ logger: true });
 app.get("/health", async () => ({ status: "ok" }));
 
 // Global plugins
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, credentials: true });
 await app.register(fastifyJwt, { secret: config.jwtSecret });
 
 // Auth: decorate request and add hook directly (not encapsulated)
@@ -38,7 +44,20 @@ app.decorateRequest("userId", "");
 const isDevMode = config.jwtSecret === "dev-secret-change-in-production";
 
 app.addHook("onRequest", async (request, reply) => {
-  if (request.url === "/health" || request.url.startsWith("/auth/")) return;
+  // Skip auth for health, auth routes, and static assets
+  if (
+    request.url === "/health" ||
+    request.url.startsWith("/auth/") ||
+    request.url.startsWith("/assets/") ||
+    request.url === "/" ||
+    request.url.endsWith(".html") ||
+    request.url.endsWith(".js") ||
+    request.url.endsWith(".css") ||
+    request.url.endsWith(".svg") ||
+    request.url.endsWith(".png") ||
+    request.url.endsWith(".ico") ||
+    request.url.endsWith(".woff2")
+  ) return;
 
   if (isDevMode) {
     const devUserId = request.headers["x-dev-user-id"] as string | undefined;
@@ -63,6 +82,29 @@ await app.register(uploadRoutes);
 await app.register(reconstructionRoutes);
 await app.register(variationRoutes);
 await app.register(assetRoutes);
+
+// Serve frontend static files
+const webDistPath = resolve(__dirname, "../../web/dist");
+if (existsSync(webDistPath)) {
+  await app.register(fastifyStatic, {
+    root: webDistPath,
+    prefix: "/",
+    wildcard: false,
+  });
+
+  // SPA fallback: serve index.html for non-API routes
+  app.setNotFoundHandler(async (request, reply) => {
+    if (
+      request.url.startsWith("/workspaces") ||
+      request.url.startsWith("/variations") ||
+      request.url.startsWith("/assets/") ||
+      request.url.startsWith("/auth/")
+    ) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    return reply.sendFile("index.html");
+  });
+}
 
 // Graceful shutdown
 const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];

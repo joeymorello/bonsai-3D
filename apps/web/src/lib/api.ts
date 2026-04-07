@@ -4,7 +4,7 @@
 
 // In dev mode with the Vite proxy, "/api" is proxied to the backend.
 // In production or when VITE_API_URL is set without a proxy, use the full URL.
-const BASE = import.meta.env.DEV ? "/api" : (import.meta.env.VITE_API_URL ?? "") + "/api";
+const BASE = "";
 
 // ---- Auth token helpers ---------------------------------------------------
 
@@ -38,6 +38,7 @@ async function request<T>(
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers,
+    credentials: "include",
   });
 
   if (res.status === 401) {

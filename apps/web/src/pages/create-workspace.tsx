@@ -81,7 +81,9 @@ export function CreateWorkspace() {
 
           {mutation.isError && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              Failed to create workspace. Please try again.
+              {mutation.error instanceof Error
+                ? mutation.error.message
+                : "Failed to create workspace. Please try again."}
             </div>
           )}
 

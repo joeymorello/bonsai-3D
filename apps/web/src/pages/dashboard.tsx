@@ -122,7 +122,7 @@ export function Dashboard() {
 
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            Failed to load workspaces. Please try again.
+            {error instanceof Error ? error.message : "Failed to load workspaces. Please try again."}
           </div>
         )}
 
