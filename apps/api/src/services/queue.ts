@@ -2,41 +2,28 @@ import { Queue, type JobsOptions } from "bullmq";
 import IORedis from "ioredis";
 import { config } from "../config.js";
 
-let _connection: IORedis | null = null;
-let _queue: Queue | null = null;
-
-function getConnection(): IORedis {
-  if (!_connection) {
-    _connection = new IORedis(config.redisUrl, {
-      maxRetriesPerRequest: null,
-      lazyConnect: true,
-    });
-    _connection.on("error", (err) => {
-      // Suppress noisy connection errors in dev when Redis is not running
-      if (process.env.NODE_ENV !== "production") return;
-      console.error("Redis connection error:", err.message);
-    });
-  }
-  return _connection;
+function createConnection(): IORedis {
+  return new IORedis(config.redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy(times) {
+      return Math.min(times * 200, 5000);
+    },
+  });
 }
+
+let _queue: Queue | null = null;
 
 function getQueue(): Queue {
   if (!_queue) {
-    _queue = new Queue("reconstruction", { connection: getConnection() });
+    _queue = new Queue("reconstruction", {
+      connection: createConnection(),
+    });
   }
   return _queue;
 }
 
-export const reconstructionQueue = new Proxy({} as Queue, {
-  get(_target, prop, receiver) {
-    const queue = getQueue();
-    const value = (queue as any)[prop];
-    if (typeof value === "function") {
-      return value.bind(queue);
-    }
-    return value;
-  },
-});
+export const reconstructionQueue = getQueue();
 
 export interface ReconstructionJobData {
   workspaceId: string;

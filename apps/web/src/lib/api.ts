@@ -200,6 +200,7 @@ export function completeUpload(
 export function startReconstruction(workspaceId: string): Promise<void> {
   return request<void>(`/workspaces/${workspaceId}/reconstruct`, {
     method: "POST",
+    body: JSON.stringify({}),
   });
 }
 
