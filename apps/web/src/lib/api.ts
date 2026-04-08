@@ -111,12 +111,22 @@ export interface PresignedUpload {
   key: string;
 }
 
-export interface ReconstructionStatus {
+export interface ReconstructionJob {
+  id: string;
   workspaceId: string;
+  provider: string;
+  status: string;
   step: string;
-  progress: number;
-  logs: string[];
-  error: string | null;
+  providerJobId: string | null;
+  logs: string | null;
+  metricsJson: unknown;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface ReconstructionStatus {
+  jobs: ReconstructionJob[];
+  latest: ReconstructionJob | undefined;
 }
 
 export interface Variation {

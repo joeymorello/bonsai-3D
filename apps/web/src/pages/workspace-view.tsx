@@ -36,12 +36,21 @@ export function WorkspaceView() {
     enabled: !!id,
   });
 
-  const { data: reconStatus } = useQuery({
+  const { data: reconData } = useQuery({
     queryKey: ["reconstruction-status", id],
     queryFn: () => getReconstructionStatus(id!),
     enabled: !!id && workspace?.status === "processing",
     refetchInterval: workspace?.status === "processing" ? 3000 : false,
   });
+
+  const reconStatus = reconData
+    ? {
+        step: reconData.latest?.step ?? "unknown",
+        progress: 0,
+        logs: reconData.latest?.logs ? [reconData.latest.logs] : [],
+        error: reconData.latest?.status === "failed" ? "Reconstruction failed" : null,
+      }
+    : null;
 
   const startReconMutation = useMutation({
     mutationFn: () => startReconstruction(id!),
@@ -117,32 +126,22 @@ export function WorkspaceView() {
 
           {/* Photo Gallery */}
           {photos && photos.length > 0 && (
-            <div className="mt-6 grid grid-cols-4 gap-3 sm:grid-cols-6 lg:grid-cols-8">
-              {photos.map((photo) => (
-                <div
-                  key={photo.id}
-                  className="group relative aspect-square overflow-hidden rounded-lg bg-gray-100"
-                >
-                  <img
-                    src={photo.url}
-                    alt={photo.filename}
-                    className="h-full w-full object-cover"
-                  />
-                  {photo.quality && (
-                    <span
-                      className={`absolute bottom-1 right-1 rounded px-1 py-0.5 text-[10px] font-medium ${
-                        photo.quality === "good"
-                          ? "bg-green-500 text-white"
-                          : photo.quality === "fair"
-                            ? "bg-yellow-500 text-white"
-                            : "bg-red-500 text-white"
-                      }`}
-                    >
-                      {photo.quality}
-                    </span>
-                  )}
-                </div>
-              ))}
+            <div className="mt-4">
+              <p className="mb-3 text-sm text-gray-500">
+                {photos.length} photo{photos.length !== 1 ? "s" : ""} uploaded
+              </p>
+              <div className="grid grid-cols-4 gap-3 sm:grid-cols-6 lg:grid-cols-8">
+                {photos.map((photo) => (
+                  <div
+                    key={photo.id}
+                    className="group relative aspect-square overflow-hidden rounded-lg bg-gray-200"
+                  >
+                    <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                      {(photo as unknown as { storageKey: string }).storageKey?.split("/").pop()?.slice(0, 8)}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </section>
