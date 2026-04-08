@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { listWorkspaces } from "@/lib/api";
+import { listWorkspaces, deleteWorkspace } from "@/lib/api";
 import type { Workspace } from "@/lib/api";
 
 const STATUS_COLORS: Record<Workspace["status"], string> = {
@@ -21,57 +21,89 @@ function StatusBadge({ status }: { status: Workspace["status"] }) {
   );
 }
 
-function WorkspaceCard({ workspace }: { workspace: Workspace }) {
+function WorkspaceCard({
+  workspace,
+  onDelete,
+}: {
+  workspace: Workspace;
+  onDelete: (id: string) => void;
+}) {
   return (
-    <Link
-      to={`/workspace/${workspace.id}`}
-      className="group block overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md"
-    >
-      <div className="aspect-video w-full bg-gray-100">
-        {workspace.coverImageUrl ? (
-          <img
-            src={workspace.coverImageUrl}
-            alt={workspace.name}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-gray-400">
-            <svg
-              className="h-12 w-12"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-              />
-            </svg>
-          </div>
-        )}
-      </div>
-
-      <div className="p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="truncate text-sm font-semibold text-gray-900 group-hover:text-green-700">
-            {workspace.name}
-          </h3>
-          <StatusBadge status={workspace.status} />
+    <div className="group relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md">
+      <Link to={`/workspace/${workspace.id}`} className="block">
+        <div className="aspect-video w-full bg-gray-100">
+          {workspace.coverImageUrl ? (
+            <img
+              src={workspace.coverImageUrl}
+              alt={workspace.name}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 text-green-300">
+              <svg
+                className="h-12 w-12"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+            </div>
+          )}
         </div>
-        <p className="mt-1 text-xs text-gray-500">
-          {new Date(workspace.createdAt).toLocaleDateString()}
-        </p>
-      </div>
-    </Link>
+
+        <div className="p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="truncate text-sm font-semibold text-gray-900 group-hover:text-green-700">
+              {workspace.name}
+            </h3>
+            <StatusBadge status={workspace.status} />
+          </div>
+          {workspace.speciesGuess && (
+            <p className="mt-0.5 text-xs italic text-gray-400">
+              {workspace.speciesGuess}
+            </p>
+          )}
+          <p className="mt-1 text-xs text-gray-500">
+            {new Date(workspace.createdAt).toLocaleDateString()}
+          </p>
+        </div>
+      </Link>
+
+      {/* Delete button */}
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          if (confirm(`Delete "${workspace.name}"?`)) {
+            onDelete(workspace.id);
+          }
+        }}
+        className="absolute right-2 top-2 rounded-full bg-black/40 p-1.5 text-white opacity-0 transition hover:bg-red-600 group-hover:opacity-100"
+        title="Delete workspace"
+      >
+        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   );
 }
 
 export function Dashboard() {
+  const queryClient = useQueryClient();
   const { data: workspaces, isLoading, error } = useQuery({
     queryKey: ["workspaces"],
     queryFn: listWorkspaces,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteWorkspace,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["workspaces"] }),
   });
 
   return (
@@ -138,7 +170,11 @@ export function Dashboard() {
         {workspaces && workspaces.length > 0 && (
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {workspaces.map((ws) => (
-              <WorkspaceCard key={ws.id} workspace={ws} />
+              <WorkspaceCard
+                key={ws.id}
+                workspace={ws}
+                onDelete={(id) => deleteMutation.mutate(id)}
+              />
             ))}
           </div>
         )}

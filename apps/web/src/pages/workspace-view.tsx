@@ -131,25 +131,47 @@ export function WorkspaceView() {
                 {photos.length} photo{photos.length !== 1 ? "s" : ""} uploaded
               </p>
               <div className="grid grid-cols-4 gap-3 sm:grid-cols-6 lg:grid-cols-8">
-                {photos.map((photo) => (
-                  <div
-                    key={photo.id}
-                    className="group relative aspect-square overflow-hidden rounded-lg bg-gray-200"
-                  >
-                    {(photo as unknown as { url?: string }).url ? (
-                      <img
-                        src={(photo as unknown as { url: string }).url}
-                        alt="Bonsai photo"
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                        {(photo as unknown as { storageKey: string }).storageKey?.split("/").pop()?.slice(0, 8)}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {photos.map((photo) => {
+                  const p = photo as unknown as {
+                    url?: string;
+                    storageKey?: string;
+                    qualityScore?: number | null;
+                    isAccepted?: boolean | null;
+                  };
+                  return (
+                    <div
+                      key={photo.id}
+                      className="group relative aspect-square overflow-hidden rounded-lg bg-gray-200"
+                    >
+                      {p.url ? (
+                        <img
+                          src={p.url}
+                          alt="Bonsai photo"
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                          {p.storageKey?.split("/").pop()?.slice(0, 8)}
+                        </div>
+                      )}
+                      {/* Quality badge */}
+                      {p.qualityScore != null && (
+                        <div
+                          className={`absolute bottom-1 right-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                            p.isAccepted === false
+                              ? "bg-red-500/80 text-white"
+                              : (p.qualityScore ?? 0) > 0.7
+                                ? "bg-green-500/80 text-white"
+                                : "bg-yellow-500/80 text-white"
+                          }`}
+                        >
+                          {Math.round((p.qualityScore ?? 0) * 100)}%
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
