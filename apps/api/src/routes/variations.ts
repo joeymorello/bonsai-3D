@@ -6,8 +6,10 @@ import {
   styleVariations,
   editOperations,
   treeWorkspaces,
+  modelAssets,
 } from "../db/schema.js";
 import { reconstructionQueue } from "../services/queue.js";
+import { presignDownload } from "../services/storage.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 const VariationIdParam = z.object({ id: z.string().uuid() });
@@ -64,16 +66,37 @@ export async function variationRoutes(app: FastifyInstance) {
     },
   );
 
-  // List variations for workspace
+  // List variations for workspace (with operation counts)
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/variations",
     async (request) => {
       const { id: workspaceId } = WorkspaceIdParam.parse(request.params);
-      return db
+      const variations = await db
         .select()
         .from(styleVariations)
         .where(eq(styleVariations.workspaceId, workspaceId))
         .orderBy(styleVariations.createdAt);
+
+      // Load operations for each variation
+      const result = await Promise.all(
+        variations.map(async (v) => {
+          const ops = await db
+            .select()
+            .from(editOperations)
+            .where(eq(editOperations.variationId, v.id));
+          return {
+            ...v,
+            updatedAt: v.createdAt, // schema lacks updatedAt, use createdAt
+            operations: ops.map((op) => ({
+              type: op.type,
+              branchId: "",
+              params: op.payloadJson as Record<string, unknown>,
+            })),
+          };
+        }),
+      );
+
+      return result;
     },
   );
 
@@ -139,7 +162,7 @@ export async function variationRoutes(app: FastifyInstance) {
     },
   );
 
-  // Trigger export job for a variation
+  // Export variation — returns presigned download URL for the model
   app.post<{ Params: { id: string } }>(
     "/variations/:id/export",
     async (request, reply) => {
@@ -151,12 +174,31 @@ export async function variationRoutes(app: FastifyInstance) {
         .where(eq(styleVariations.id, variationId));
       if (!variation) return reply.status(404).send({ error: "Variation not found" });
 
-      const job = await reconstructionQueue.add("export-variation", {
-        variationId,
-        workspaceId: variation.workspaceId,
-      });
+      // If variation has a snapshot asset, serve that
+      if (variation.snapshotAssetId) {
+        const [asset] = await db
+          .select()
+          .from(modelAssets)
+          .where(eq(modelAssets.id, variation.snapshotAssetId));
+        if (asset) {
+          const url = await presignDownload(asset.storageKey);
+          return { downloadUrl: url };
+        }
+      }
 
-      return reply.status(202).send({ jobId: job.id, status: "queued" });
+      // Otherwise serve the base model (cleaned mesh)
+      const assets = await db
+        .select()
+        .from(modelAssets)
+        .where(eq(modelAssets.workspaceId, variation.workspaceId));
+
+      const mesh = assets.find((a) => a.kind === "cleaned_mesh") ?? assets.find((a) => a.kind === "original_mesh");
+      if (!mesh) {
+        return reply.status(404).send({ error: "No model found for this workspace" });
+      }
+
+      const url = await presignDownload(mesh.storageKey);
+      return { downloadUrl: url };
     },
   );
 }
