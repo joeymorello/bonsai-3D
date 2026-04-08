@@ -19,6 +19,8 @@ from .models import (
     CleanupMeshResponse,
     ExtractSkeletonRequest,
     ExtractSkeletonResponse,
+    DeformRequest,
+    DeformResponse,
 )
 from .preprocessing import (
     normalize_orientation,
@@ -30,6 +32,7 @@ from .preprocessing import (
 from .segmentation import segment_subject
 from .mesh_cleanup import normalize_mesh, decimate_mesh, compute_bounding_box
 from .skeleton_extraction import extract_skeleton
+from .deformation import apply_deformations
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +186,29 @@ async def extract_skeleton_endpoint(request: ExtractSkeletonRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Skeleton extraction failed: {str(e)}",
+        )
+
+
+@app.post("/deform", response_model=DeformResponse)
+async def deform_mesh(request: DeformRequest):
+    """Apply edit operations to a mesh based on its skeleton and return deformed mesh."""
+    try:
+        local_path = download_to_temp(request.mesh_url)
+        operations = [op.model_dump() for op in request.operations]
+        output_path, ops_applied = apply_deformations(
+            local_path,
+            request.skeleton,
+            operations,
+        )
+        return DeformResponse(
+            deformed_mesh_url=output_path,
+            operations_applied=ops_applied,
+        )
+    except Exception as e:
+        logger.exception("Deformation failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Deformation failed: {str(e)}",
         )
 
 

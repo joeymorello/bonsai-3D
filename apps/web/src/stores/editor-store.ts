@@ -279,8 +279,27 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       variation: { ...s.variation, isDirty: false },
     })),
 
-  saveVariation: () => {
-    // In a real app this would persist to the API
+  saveVariation: async () => {
+    const state = get();
+    const variationId = state.variation.activeVariationId;
+    if (!variationId) return;
+
+    // Persist each operation from the undo stack that hasn't been saved
+    const { addOperation } = await import("@/lib/api");
+    for (const op of state.history.undoStack) {
+      const apiType = op.type === "bend" ? "bend_branch"
+        : op.type === "rotate" ? "rotate_branch"
+        : op.type === "prune" ? "prune_segment"
+        : op.type === "prune_cluster" ? "hide_leaf_cluster"
+        : "translate_branch";
+
+      await addOperation(variationId, {
+        type: op.type as "bend" | "rotate" | "prune" | "prune_cluster",
+        branchId: op.branchId,
+        params: op.params,
+      }).catch(() => {/* ignore duplicate saves */});
+    }
+
     set((s) => ({
       variation: { ...s.variation, isDirty: false },
     }));

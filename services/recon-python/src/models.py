@@ -70,3 +70,23 @@ class ExtractSkeletonRequest(BaseModel):
 
 class ExtractSkeletonResponse(BaseModel):
     skeleton: dict[str, Any] = Field(..., description="Skeleton JSON with nodes, edges, root_id")
+
+
+# --- Deformation ---
+
+class DeformOperation(BaseModel):
+    type: str = Field(..., description="Operation type: bend_branch, rotate_branch, prune_segment, etc.")
+    branchId: str = Field(..., description="Branch/edge ID to apply operation to")
+    params: dict[str, Any] = Field(default_factory=dict, description="Operation parameters")
+
+
+class DeformRequest(BaseModel):
+    mesh_url: str = Field(..., description="URL of the base mesh to deform")
+    skeleton: dict[str, Any] = Field(..., description="Skeleton JSON")
+    operations: list[DeformOperation] = Field(..., description="Edit operations to apply")
+
+
+class DeformResponse(BaseModel):
+    deformed_mesh_url: str = Field(..., description="Path to deformed mesh file")
+    deformed_s3_key: str = Field("", description="S3 key if uploaded, else empty")
+    operations_applied: int = Field(..., description="Number of operations applied")

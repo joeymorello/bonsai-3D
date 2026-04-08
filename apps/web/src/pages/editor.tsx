@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getWorkspace, getWorkspaceAssets, listVariations } from "@/lib/api";
@@ -67,6 +67,36 @@ export function Editor() {
   const setActiveVariation = useEditorStore((s) => s.setActiveVariation);
   const isDirty = useEditorStore((s) => s.variation.isDirty);
   const saveVariation = useEditorStore((s) => s.saveVariation);
+
+  // Keyboard shortcuts
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      // Ignore when typing in inputs
+      if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
+
+      const store = useEditorStore.getState();
+
+      if (e.key === "o" || e.key === "O") { store.setTool("orbit"); return; }
+      if (e.key === "s" && !e.ctrlKey && !e.metaKey) { store.setTool("style"); return; }
+      if (e.key === "c" || e.key === "C") { store.setTool("clipper"); return; }
+      if (e.key === "Escape") { store.selectBranch(null); return; }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (store.selection.selectedBranchId) {
+          store.pruneBranch(store.selection.selectedBranchId);
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); store.undo(); return; }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); store.redo(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveVariation(); return; }
+    },
+    [saveVariation],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-gray-900">

@@ -1,8 +1,9 @@
 import type { Job } from "bullmq";
+import { readFile } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { downloadFromS3, uploadToS3, getPresignedUrl } from "../lib/storage.js";
 import { db } from "../lib/db.js";
-import { modelAssets, styleVariations, branchNodes } from "../lib/schema.js";
+import { modelAssets, styleVariations } from "../lib/schema.js";
 
 interface ExportJobData {
   workspaceId: string;
@@ -80,9 +81,10 @@ export async function processExport(job: Job): Promise<void> {
         });
 
         if (deformRes.ok) {
-          const result = (await deformRes.json()) as { deformed_s3_key: string };
-          processedModel = await downloadFromS3(result.deformed_s3_key);
-          await job.log("[export] Deformation applied successfully");
+          const result = (await deformRes.json()) as { deformed_mesh_url: string; operations_applied: number };
+          // Python service returns a local file path — read it directly
+          processedModel = await readFile(result.deformed_mesh_url);
+          await job.log(`[export] Deformation applied (${result.operations_applied} ops)`);
         } else {
           await job.log(
             `[export] Deformation service returned ${deformRes.status} — using base model`,

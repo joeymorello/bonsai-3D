@@ -1,5 +1,6 @@
-import { useMemo, useState, useCallback } from "react";
-import { CatmullRomCurve3, Vector3, TubeGeometry } from "three";
+import { useMemo, useState, useCallback, useRef } from "react";
+import { CatmullRomCurve3, Vector3, TubeGeometry, Plane } from "three";
+import { useThree } from "@react-three/fiber";
 import { useEditorStore } from "@/stores/editor-store";
 
 export interface BranchNodeData {
@@ -74,25 +75,65 @@ function BranchTube({
 function ControlPointHandle({
   position,
   nodeId,
+  handleIndex,
 }: {
   position: [number, number, number];
   nodeId: string;
+  handleIndex: number;
 }) {
   const activeTool = useEditorStore((s) => s.tool.activeTool);
-  const selectBranch = useEditorStore((s) => s.selectBranch);
+  const bendBranch = useEditorStore((s) => s.bendBranch);
+  const { camera, raycaster, pointer } = useThree();
+  const isDragging = useRef(false);
+  const dragStart = useRef(new Vector3());
+  const [hovered, setHovered] = useState(false);
 
   if (activeTool !== "style") return null;
+
+  const dragPlane = new Plane();
+
+  const getWorldPoint = (): Vector3 | null => {
+    raycaster.setFromCamera(pointer, camera);
+    const target = new Vector3();
+    const hit = raycaster.ray.intersectPlane(dragPlane, target);
+    return hit ? target : null;
+  };
 
   return (
     <mesh
       position={position}
-      onClick={(e) => {
+      onPointerDown={(e) => {
         e.stopPropagation();
-        selectBranch(nodeId);
+        // Set up drag plane facing the camera through this point
+        const normal = camera.position.clone().sub(new Vector3(...position)).normalize();
+        dragPlane.setFromNormalAndCoplanarPoint(normal, new Vector3(...position));
+        const pt = getWorldPoint();
+        if (pt) {
+          dragStart.current.copy(pt);
+          isDragging.current = true;
+          (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+        }
       }}
+      onPointerMove={(e) => {
+        if (!isDragging.current) return;
+        e.stopPropagation();
+        const pt = getWorldPoint();
+        if (!pt) return;
+        const delta = pt.clone().sub(dragStart.current);
+        if (delta.length() > 0.001) {
+          bendBranch(nodeId, handleIndex, [delta.x, delta.y, delta.z]);
+          dragStart.current.copy(pt);
+        }
+      }}
+      onPointerUp={(e) => {
+        isDragging.current = false;
+        (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+      }}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => { setHovered(false); isDragging.current = false; }}
     >
-      <sphereGeometry args={[0.015, 8, 8]} />
-      <meshBasicMaterial color="#ff6600" depthTest={false} />
+      <sphereGeometry args={[hovered ? 0.02 : 0.015, 8, 8]} />
+      <meshBasicMaterial color={hovered ? "#ffaa00" : "#ff6600"} depthTest={false} />
     </mesh>
   );
 }
@@ -132,6 +173,7 @@ export function SkeletonOverlay({ branchNodes }: SkeletonOverlayProps) {
                   key={i}
                   position={cp.position}
                   nodeId={node.id}
+                  handleIndex={i}
                 />
               ))}
           </group>
