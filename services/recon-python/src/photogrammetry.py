@@ -60,11 +60,11 @@ class _PairMatch(NamedTuple):
 
 _MAX_IMAGE_DIM = 1536          # resize longest side to this
 _SIFT_N_FEATURES = 8000
-_RATIO_TEST_THRESHOLD = 0.75
-_MIN_MATCHES_FOR_POSE = 20
-_MIN_INLIERS_TRIANGULATE = 10
+_CROSS_CHECK_TOP_N = 1000      # keep top N cross-check matches per pair
+_MIN_MATCHES_FOR_POSE = 15
+_MIN_INLIERS_TRIANGULATE = 8
 _RANSAC_CONFIDENCE = 0.999
-_RANSAC_THRESHOLD = 1.0
+_RANSAC_THRESHOLD = 2.0        # pixels — needs to be generous for real photos
 _OUTLIER_KNN = 12
 _OUTLIER_STD_FACTOR = 2.0
 _ALPHA_PERCENTILE = 85
@@ -121,24 +121,19 @@ def _match_pair(
     desc_b: np.ndarray,
     kp_a: tuple,
     kp_b: tuple,
-    flann: cv2.FlannBasedMatcher,
+    matcher: cv2.BFMatcher,
 ) -> tuple[list, np.ndarray, np.ndarray]:
-    """FLANN match two descriptor sets with Lowe's ratio test."""
+    """Cross-check match two descriptor sets (much more accurate than ratio test for natural scenes)."""
     if len(desc_a) < 2 or len(desc_b) < 2:
         return [], np.empty((0, 2)), np.empty((0, 2))
 
-    raw = flann.knnMatch(desc_a, desc_b, k=2)
+    raw = matcher.match(desc_a, desc_b)
+    # Sort by distance and keep top N
+    raw = sorted(raw, key=lambda m: m.distance)[:_CROSS_CHECK_TOP_N]
 
-    good: list[cv2.DMatch] = []
-    for pair in raw:
-        if len(pair) == 2:
-            m, n = pair
-            if m.distance < _RATIO_TEST_THRESHOLD * n.distance:
-                good.append(m)
-
-    pts_a = np.float64([kp_a[m.queryIdx].pt for m in good]) if good else np.empty((0, 2))
-    pts_b = np.float64([kp_b[m.trainIdx].pt for m in good]) if good else np.empty((0, 2))
-    return good, pts_a, pts_b
+    pts_a = np.float64([kp_a[m.queryIdx].pt for m in raw]) if raw else np.empty((0, 2))
+    pts_b = np.float64([kp_b[m.trainIdx].pt for m in raw]) if raw else np.empty((0, 2))
+    return raw, pts_a, pts_b
 
 
 # ---------------------------------------------------------------------------
@@ -146,13 +141,36 @@ def _match_pair(
 # ---------------------------------------------------------------------------
 
 
-def _estimate_intrinsics(h: int, w: int) -> np.ndarray:
-    """Camera intrinsic matrix for a typical phone camera.
+def _estimate_intrinsics(h: int, w: int, image_path: str | None = None) -> np.ndarray:
+    """Camera intrinsic matrix, using EXIF data when available.
 
-    Assumes ~28mm equivalent focal length, which maps to roughly 0.85x the
-    larger image dimension in pixels.
+    Reads FocalLengthIn35mmFilm from EXIF and converts to pixel focal length.
+    Falls back to 0.85 * max(w, h) if EXIF is unavailable.
     """
-    focal = 0.85 * max(w, h)
+    focal_35mm = None
+    if image_path:
+        try:
+            from PIL import Image as PILImage
+            from PIL.ExifTags import TAGS
+            pil = PILImage.open(image_path)
+            exif = pil._getexif()
+            if exif:
+                for tag_id, value in exif.items():
+                    tag = TAGS.get(tag_id, tag_id)
+                    if tag == "FocalLengthIn35mmFilm" and value:
+                        focal_35mm = float(value)
+                        break
+        except Exception:
+            pass
+
+    if focal_35mm and focal_35mm > 0:
+        # 35mm sensor is 36mm wide; convert to pixel focal length
+        focal = focal_35mm * max(w, h) / 36.0
+        logger.info("Using EXIF focal length: %dmm (35mm equiv) = %.0fpx", focal_35mm, focal)
+    else:
+        focal = 0.85 * max(w, h)
+        logger.info("No EXIF focal length; using default estimate: %.0fpx", focal)
+
     return np.array([
         [focal, 0.0,   w / 2.0],
         [0.0,   focal, h / 2.0],
@@ -294,15 +312,17 @@ def _voxel_downsample(
     voxel_size: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reduce density by averaging points within each voxel cell."""
-    if len(points) < 20:
+    if len(points) < 2000:
+        # Don't downsample small clouds — we need all the points we can get
+        logger.info("Voxel downsample: skipped (only %d points)", len(points))
         return points, colors
 
     if voxel_size is None:
-        extents = points.max(axis=0) - points.min(axis=0)
-        max_ext = max(extents)
-        # Aim for at most ~10 000 voxels along the longest axis
-        voxel_size = max_ext / min(len(points) ** (1 / 3) * 2, 200)
-        voxel_size = max(voxel_size, 1e-7)
+        # Use median nearest-neighbor distance to set voxel size
+        tree = KDTree(points)
+        dists, _ = tree.query(points, k=2)
+        median_nn = np.median(dists[:, 1])
+        voxel_size = max(median_nn * 2.0, 1e-7)
 
     origin = points.min(axis=0)
     indices = ((points - origin) / voxel_size).astype(np.int64)
@@ -392,15 +412,26 @@ def _alpha_shape_mesh(
     rgba = np.hstack([colors, np.full((len(colors), 1), 255, dtype=np.uint8)])
 
     mesh = trimesh.Trimesh(vertices=points, faces=faces, vertex_colors=rgba, process=True)
-    mesh.remove_degenerate_faces()
-    mesh.remove_duplicate_faces()
+    # Clean up mesh faces — use trimesh's current API
+    try:
+        good = mesh.nondegenerate_faces()
+        mesh.update_faces(good)
+    except Exception:
+        pass
+    try:
+        unique = mesh.unique_faces()
+        mesh.update_faces(unique)
+    except Exception:
+        pass
     mesh.remove_unreferenced_vertices()
 
     if len(mesh.faces) < 4:
         return None
 
-    trimesh.repair.fix_normals(mesh)
-    trimesh.repair.fix_winding(mesh)
+    try:
+        trimesh.repair.fix_normals(mesh)
+    except Exception:
+        pass  # networkx may be unavailable
     return mesh
 
 
@@ -489,7 +520,7 @@ def reconstruct_from_photos(image_paths: list[str]) -> str:
 
     # Use intrinsics from the first usable image (assume same camera throughout)
     ref = views[usable_idx[0]]
-    K = _estimate_intrinsics(*ref.shape)
+    K = _estimate_intrinsics(*ref.shape, image_path=ref.path)
     logger.info("Camera intrinsics: fx=%.1f  cx=%.1f  cy=%.1f", K[0, 0], K[0, 2], K[1, 2])
 
     # ------------------------------------------------------------------ #
@@ -497,10 +528,9 @@ def reconstruct_from_photos(image_paths: list[str]) -> str:
     # ------------------------------------------------------------------ #
     logger.info("=== Stage 2: Pairwise feature matching ===")
 
-    flann = cv2.FlannBasedMatcher(
-        dict(algorithm=1, trees=5),   # FLANN_INDEX_KDTREE
-        dict(checks=100),
-    )
+    # BFMatcher with cross-check is much more accurate than FLANN ratio test
+    # for natural scenes with repetitive textures (foliage, bark)
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
 
     pair_matches: list[_PairMatch] = []
     for i, j in combinations(usable_idx, 2):
@@ -509,10 +539,10 @@ def reconstruct_from_photos(image_paths: list[str]) -> str:
             good, pts_a, pts_b = _match_pair(
                 vi.descriptors, vj.descriptors,
                 vi.keypoints, vj.keypoints,
-                flann,
+                bf,
             )
         except cv2.error as exc:
-            logger.debug("FLANN error for pair (%d,%d): %s", i, j, exc)
+            logger.debug("Matching error for pair (%d,%d): %s", i, j, exc)
             continue
 
         if len(good) < _MIN_MATCHES_FOR_POSE:
@@ -525,20 +555,33 @@ def reconstruct_from_photos(image_paths: list[str]) -> str:
     if not pair_matches:
         raise ValueError("No image pair produced enough feature matches")
 
-    # Sort best-first for seed selection
-    pair_matches.sort(key=lambda pm: len(pm.matches), reverse=True)
-
     # ------------------------------------------------------------------ #
     # Stage 3  --  Initialize reconstruction with best pair              #
     # ------------------------------------------------------------------ #
     logger.info("=== Stage 3: Initialize with best pair ===")
 
-    seed = pair_matches[0]
-    result = _recover_pose(seed.pts_a, seed.pts_b, K)
-    if result is None:
-        raise ValueError("Pose recovery failed for the best-matching image pair")
+    # Try all pairs and pick the one with the most essential matrix inliers
+    best_seed = None
+    best_inlier_count = 0
+    best_result = None
+    for pm in pair_matches:
+        result = _recover_pose(pm.pts_a, pm.pts_b, K)
+        if result is None:
+            continue
+        _, _, pa_in, pb_in = result
+        n_in = len(pa_in)
+        if n_in > best_inlier_count:
+            best_inlier_count = n_in
+            best_seed = pm
+            best_result = result
+        logger.debug("  Pair (%d,%d): %d inliers", pm.idx_a, pm.idx_b, n_in)
 
-    R_rel, t_rel, pts_a_in, pts_b_in = result
+    if best_seed is None or best_result is None:
+        raise ValueError("Pose recovery failed for all image pairs")
+
+    seed = best_seed
+    R_rel, t_rel, pts_a_in, pts_b_in = best_result
+    logger.info("Best seed pair: (%d,%d) with %d inliers", seed.idx_a, seed.idx_b, best_inlier_count)
 
     R1 = np.eye(3, dtype=np.float64)
     t1 = np.zeros((3, 1), dtype=np.float64)
@@ -646,13 +689,9 @@ def reconstruct_from_photos(image_paths: list[str]) -> str:
         Ri, ti = registered[i]
         Rj, tj = registered[j]
 
-        # Quick essential-matrix filter for inliers
-        result = _recover_pose(pa, pb, K)
-        if result is None:
-            continue
-        _, _, pa_in, pb_in = result
-
-        extra = _triangulate(K, Ri, ti, Rj, tj, pa_in, pb_in)
+        # Triangulate directly using registered poses — no re-filtering needed
+        # since cross-check already provides clean matches
+        extra = _triangulate(K, Ri, ti, Rj, tj, pa, pb)
         if len(extra) > 0:
             c1 = _sample_colors_from_view(extra, K, Ri, ti, views[i].image)
             c2 = _sample_colors_from_view(extra, K, Rj, tj, views[j].image)
