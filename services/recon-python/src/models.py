@@ -100,3 +100,16 @@ class GeneratePlaceholderRequest(BaseModel):
 
 class GeneratePlaceholderResponse(BaseModel):
     mesh_path: str = Field(..., description="Local path to generated GLB mesh")
+
+
+# --- Photogrammetry Reconstruction ---
+
+class PhotogrammetryRequest(BaseModel):
+    image_urls: list[str] = Field(..., description="List of image URLs/paths for multi-view reconstruction")
+
+
+class PhotogrammetryResponse(BaseModel):
+    mesh_path: str = Field(..., description="Local path to reconstructed GLB mesh")
+    point_count: int = Field(0, description="Number of 3D points reconstructed")
+    face_count: int = Field(0, description="Number of mesh faces")
+    method: str = Field("sfm", description="Reconstruction method used")

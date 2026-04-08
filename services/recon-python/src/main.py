@@ -23,6 +23,8 @@ from .models import (
     DeformResponse,
     GeneratePlaceholderRequest,
     GeneratePlaceholderResponse,
+    PhotogrammetryRequest,
+    PhotogrammetryResponse,
 )
 from .preprocessing import (
     normalize_orientation,
@@ -36,6 +38,7 @@ from .mesh_cleanup import normalize_mesh, decimate_mesh, compute_bounding_box
 from .skeleton_extraction import extract_skeleton
 from .deformation import apply_deformations
 from .placeholder_mesh import generate_bonsai_mesh
+from .photogrammetry import reconstruct_from_photos
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +192,36 @@ async def extract_skeleton_endpoint(request: ExtractSkeletonRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Skeleton extraction failed: {str(e)}",
+        )
+
+
+@app.post("/reconstruct-photogrammetry", response_model=PhotogrammetryResponse)
+async def reconstruct_photogrammetry(request: PhotogrammetryRequest):
+    """Reconstruct a 3D mesh from multiple photographs using SfM photogrammetry."""
+    try:
+        # Download all images to local temp files
+        local_paths = []
+        for url in request.image_urls:
+            local_path = download_to_temp(url)
+            local_paths.append(local_path)
+
+        mesh_path = reconstruct_from_photos(local_paths)
+
+        # Get mesh stats
+        import trimesh
+        mesh = trimesh.load(mesh_path, force="mesh")
+
+        return PhotogrammetryResponse(
+            mesh_path=mesh_path,
+            point_count=len(mesh.vertices),
+            face_count=len(mesh.faces),
+            method="sfm_opencv",
+        )
+    except Exception as e:
+        logger.exception("Photogrammetry reconstruction failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Photogrammetry failed: {str(e)}",
         )
 
 

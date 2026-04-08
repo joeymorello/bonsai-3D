@@ -121,51 +121,60 @@ export async function processReconstruction(job: Job): Promise<void> {
     let s3Key: string;
 
     if (!MESHY_API_KEY || MESHY_API_KEY === "placeholder") {
-      // DEV MODE: Generate a placeholder bonsai mesh via Python service
+      // LOCAL MODE: Use OpenCV SfM photogrammetry to reconstruct from photos
       await job.log(
-        "[submit_reconstruction] No Meshy API key — generating placeholder mesh",
+        "[submit_reconstruction] Using local photogrammetry (OpenCV SfM)...",
       );
 
-      // Use the Python service to create a sample mesh from the uploaded images
-      // We'll create a simple procedural bonsai shape
       const RECON_URL = process.env.RECON_SERVICE_URL ?? "http://localhost:8000";
-      const genRes = await fetch(`${RECON_URL}/generate-placeholder`, {
+
+      // Pass preprocessed image URLs to the photogrammetry service
+      const photogramRes = await fetch(`${RECON_URL}/reconstruct-photogrammetry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId }),
+        body: JSON.stringify({ image_urls: preprocessed.processed_urls }),
       });
 
-      if (genRes.ok) {
-        const genResult = (await genRes.json()) as { mesh_path: string };
-        const meshBytes = await readFile(genResult.mesh_path);
+      if (photogramRes.ok) {
+        const result = (await photogramRes.json()) as {
+          mesh_path: string;
+          point_count: number;
+          face_count: number;
+          method: string;
+        };
+        await job.log(
+          `[submit_reconstruction] Photogrammetry complete: ${result.point_count} points, ${result.face_count} faces (${result.method})`,
+        );
+        const meshBytes = await readFile(result.mesh_path);
         s3Key = `workspaces/${workspaceId}/models/original.glb`;
         await uploadToS3(s3Key, meshBytes, "model/gltf-binary");
-        await job.log(`[submit_reconstruction] Placeholder mesh stored at ${s3Key}`);
       } else {
-        // Fallback: create a minimal GLB from scratch won't work easily,
-        // so let's skip to a simple approach using trimesh via cleanup
+        // Fallback to placeholder if photogrammetry fails
+        const errText = await photogramRes.text();
         await job.log(
-          "[submit_reconstruction] Placeholder generation failed — creating minimal mesh",
+          `[submit_reconstruction] Photogrammetry failed (${photogramRes.status}): ${errText}`,
         );
-        // Create a very simple mesh via the Python service's cleanup endpoint
-        // We'll generate one from scratch and upload it
-        const minimalRes = await fetch(`${RECON_URL}/generate-placeholder`, {
+        await job.log(
+          "[submit_reconstruction] Falling back to placeholder mesh...",
+        );
+
+        const placeholderRes = await fetch(`${RECON_URL}/generate-placeholder`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ workspace_id: workspaceId }),
-        }).catch(() => null);
+        });
 
-        if (!minimalRes?.ok) {
-          throw new Error("Cannot generate placeholder mesh and no Meshy API key configured");
+        if (!placeholderRes.ok) {
+          throw new Error("Both photogrammetry and placeholder generation failed");
         }
-        const minResult = (await minimalRes.json()) as { mesh_path: string };
-        const meshBytes = await readFile(minResult.mesh_path);
+        const genResult = (await placeholderRes.json()) as { mesh_path: string };
+        const meshBytes = await readFile(genResult.mesh_path);
         s3Key = `workspaces/${workspaceId}/models/original.glb`;
         await uploadToS3(s3Key, meshBytes, "model/gltf-binary");
       }
 
-      await updateProgress(job, "poll_reconstruction", "Skipped (dev mode)");
-      await updateProgress(job, "download_result", "Skipped (dev mode)");
+      await updateProgress(job, "poll_reconstruction", "Complete (local)");
+      await updateProgress(job, "download_result", "Complete (local)");
     } else {
       // PRODUCTION: Use Meshy API
       const meshyJob = (await callMeshyApi("POST", "/image-to-3d", {
