@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { reconstructionJobs, uploadPhotos, treeWorkspaces } from "../db/schema.js";
 import { enqueueReconstructionJob } from "../services/queue.js";
-import { getObjectUrl } from "../services/storage.js";
+import { presignDownload } from "../services/storage.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 
@@ -50,8 +50,10 @@ export async function reconstructionRoutes(app: FastifyInstance) {
         })
         .returning();
 
-      // Build image URLs and enqueue
-      const imageUrls = photos.map((p) => getObjectUrl(p.storageKey));
+      // Build presigned image URLs and enqueue
+      const imageUrls = await Promise.all(
+        photos.map((p) => presignDownload(p.storageKey)),
+      );
       await enqueueReconstructionJob({
         workspaceId,
         jobId: job!.id,

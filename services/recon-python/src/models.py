@@ -90,3 +90,13 @@ class DeformResponse(BaseModel):
     deformed_mesh_url: str = Field(..., description="Path to deformed mesh file")
     deformed_s3_key: str = Field("", description="S3 key if uploaded, else empty")
     operations_applied: int = Field(..., description="Number of operations applied")
+
+
+# --- Placeholder Generation ---
+
+class GeneratePlaceholderRequest(BaseModel):
+    workspace_id: str = Field(..., description="Workspace ID for labeling")
+
+
+class GeneratePlaceholderResponse(BaseModel):
+    mesh_path: str = Field(..., description="Local path to generated GLB mesh")

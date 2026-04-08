@@ -21,6 +21,8 @@ from .models import (
     ExtractSkeletonResponse,
     DeformRequest,
     DeformResponse,
+    GeneratePlaceholderRequest,
+    GeneratePlaceholderResponse,
 )
 from .preprocessing import (
     normalize_orientation,
@@ -33,6 +35,7 @@ from .segmentation import segment_subject
 from .mesh_cleanup import normalize_mesh, decimate_mesh, compute_bounding_box
 from .skeleton_extraction import extract_skeleton
 from .deformation import apply_deformations
+from .placeholder_mesh import generate_bonsai_mesh
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +189,20 @@ async def extract_skeleton_endpoint(request: ExtractSkeletonRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Skeleton extraction failed: {str(e)}",
+        )
+
+
+@app.post("/generate-placeholder", response_model=GeneratePlaceholderResponse)
+async def generate_placeholder(request: GeneratePlaceholderRequest):
+    """Generate a procedural bonsai mesh for dev/testing."""
+    try:
+        mesh_path = generate_bonsai_mesh()
+        return GeneratePlaceholderResponse(mesh_path=mesh_path)
+    except Exception as e:
+        logger.exception("Placeholder generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Placeholder generation failed: {str(e)}",
         )
 
 

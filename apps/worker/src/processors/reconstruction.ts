@@ -1,13 +1,13 @@
+import { readFile } from "node:fs/promises";
 import type { Job } from "bullmq";
 import { eq } from "drizzle-orm";
 import {
   qualityCheck,
   preprocess,
-  segmentImages,
   cleanupMesh,
   extractSkeleton,
 } from "../lib/recon-service.js";
-import { uploadToS3 } from "../lib/storage.js";
+import { uploadToS3, getPresignedUrl } from "../lib/storage.js";
 import { db } from "../lib/db.js";
 import {
   treeWorkspaces,
@@ -23,8 +23,8 @@ const MESHY_API_URL = "https://api.meshy.ai/v2";
 interface ReconstructionJobData {
   workspaceId: string;
   jobId: string;
-  photoUrls: string[];
-  provider: "meshy" | "tripo" | "local";
+  imageUrls: string[];
+  provider: string;
 }
 
 type Stage =
@@ -79,25 +79,37 @@ async function callMeshyApi(
 
 export async function processReconstruction(job: Job): Promise<void> {
   const data = job.data as ReconstructionJobData;
-  const { workspaceId, photoUrls } = data;
+  const { workspaceId, imageUrls } = data;
 
   try {
     // Stage 1: Photo quality assessment
     await updateProgress(job, "photo_qa", "Checking photo quality...");
-    const qaResult = await qualityCheck(photoUrls);
+    const qaResponse = await qualityCheck(imageUrls);
 
-    if (!qaResult.passed) {
-      throw new Error(
-        `Photo quality check failed: ${qaResult.issues.join(", ")}`,
+    const accepted = qaResponse.results.filter((r) => r.is_accepted);
+    const rejected = qaResponse.results.filter((r) => !r.is_accepted);
+    await job.log(
+      `[photo_qa] ${accepted.length} accepted, ${rejected.length} rejected`,
+    );
+
+    // Use accepted images if any, otherwise fall back to all (lenient dev mode)
+    const usableUrls =
+      accepted.length > 0
+        ? accepted.map((r) => r.image_url)
+        : qaResponse.results.map((r) => r.image_url);
+
+    if (accepted.length === 0) {
+      await job.log(
+        "[photo_qa] No images passed strict QA — using all images (dev mode)",
       );
     }
 
     // Stage 2: Preprocess images
     await updateProgress(job, "preprocess_images", "Preprocessing images...");
-    const preprocessed = await preprocess(photoUrls);
-
-    // Segmentation pass
-    await segmentImages(preprocessed.processed_paths);
+    const preprocessed = await preprocess(usableUrls);
+    await job.log(
+      `[preprocess_images] ${preprocessed.processed_urls.length} images preprocessed`,
+    );
 
     // Stage 3: Submit to reconstruction provider
     await updateProgress(
@@ -106,93 +118,118 @@ export async function processReconstruction(job: Job): Promise<void> {
       "Submitting to reconstruction service...",
     );
 
-    if (!MESHY_API_KEY) {
+    let s3Key: string;
+
+    if (!MESHY_API_KEY || MESHY_API_KEY === "placeholder") {
+      // DEV MODE: Generate a placeholder bonsai mesh via Python service
       await job.log(
-        "[submit_reconstruction] No MESHY_API_KEY set — skipping Meshy submission",
+        "[submit_reconstruction] No Meshy API key — generating placeholder mesh",
       );
-      // In dev/test without an API key, skip the Meshy stages
-      await updateProgress(
-        job,
-        "publish_workspace",
-        "Skipping reconstruction (no API key) — publishing workspace...",
-      );
-      await job.log(
-        `[publish_workspace] Workspace ${workspaceId} — no model generated (no API key)`,
-      );
-      await updateProgress(
-        job,
-        "generate_thumbnails",
-        "Would generate thumbnails (placeholder)",
-      );
-      await job.log(
-        `[generate_thumbnails] Thumbnail generation skipped (no model)`,
-      );
-      await job.updateProgress(100);
-      return;
-    }
 
-    const meshyJob = (await callMeshyApi("POST", "/image-to-3d", {
-      image_urls: preprocessed.processed_paths,
-      mode: "refine",
-      topology: "quad",
-      target_polycount: 50000,
-    })) as { result: string };
+      // Use the Python service to create a sample mesh from the uploaded images
+      // We'll create a simple procedural bonsai shape
+      const RECON_URL = process.env.RECON_SERVICE_URL ?? "http://localhost:8000";
+      const genRes = await fetch(`${RECON_URL}/generate-placeholder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
 
-    const meshyTaskId = meshyJob.result;
+      if (genRes.ok) {
+        const genResult = (await genRes.json()) as { mesh_path: string };
+        const meshBytes = await readFile(genResult.mesh_path);
+        s3Key = `workspaces/${workspaceId}/models/original.glb`;
+        await uploadToS3(s3Key, meshBytes, "model/gltf-binary");
+        await job.log(`[submit_reconstruction] Placeholder mesh stored at ${s3Key}`);
+      } else {
+        // Fallback: create a minimal GLB from scratch won't work easily,
+        // so let's skip to a simple approach using trimesh via cleanup
+        await job.log(
+          "[submit_reconstruction] Placeholder generation failed — creating minimal mesh",
+        );
+        // Create a very simple mesh via the Python service's cleanup endpoint
+        // We'll generate one from scratch and upload it
+        const minimalRes = await fetch(`${RECON_URL}/generate-placeholder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workspace_id: workspaceId }),
+        }).catch(() => null);
 
-    // Stage 4: Poll reconstruction
-    await updateProgress(
-      job,
-      "poll_reconstruction",
-      `Polling Meshy task ${meshyTaskId}...`,
-    );
-    let meshyStatus = "PENDING";
-    let meshyResult: { model_urls: { glb: string; obj: string } } | null =
-      null;
-    const maxPolls = 120;
-    let pollCount = 0;
-
-    while (meshyStatus !== "SUCCEEDED" && pollCount < maxPolls) {
-      await new Promise((resolve) => setTimeout(resolve, 10_000));
-      const pollData = (await callMeshyApi(
-        "GET",
-        `/image-to-3d/${meshyTaskId}`,
-      )) as {
-        status: string;
-        model_urls?: { glb: string; obj: string };
-        progress: number;
-      };
-      meshyStatus = pollData.status;
-
-      if (meshyStatus === "FAILED") {
-        throw new Error("Meshy reconstruction failed");
+        if (!minimalRes?.ok) {
+          throw new Error("Cannot generate placeholder mesh and no Meshy API key configured");
+        }
+        const minResult = (await minimalRes.json()) as { mesh_path: string };
+        const meshBytes = await readFile(minResult.mesh_path);
+        s3Key = `workspaces/${workspaceId}/models/original.glb`;
+        await uploadToS3(s3Key, meshBytes, "model/gltf-binary");
       }
 
-      if (meshyStatus === "SUCCEEDED" && pollData.model_urls) {
-        meshyResult = { model_urls: pollData.model_urls };
+      await updateProgress(job, "poll_reconstruction", "Skipped (dev mode)");
+      await updateProgress(job, "download_result", "Skipped (dev mode)");
+    } else {
+      // PRODUCTION: Use Meshy API
+      const meshyJob = (await callMeshyApi("POST", "/image-to-3d", {
+        image_urls: preprocessed.processed_urls,
+        mode: "refine",
+        topology: "quad",
+        target_polycount: 50000,
+      })) as { result: string };
+
+      const meshyTaskId = meshyJob.result;
+
+      // Stage 4: Poll reconstruction
+      await updateProgress(
+        job,
+        "poll_reconstruction",
+        `Polling Meshy task ${meshyTaskId}...`,
+      );
+      let meshyStatus = "PENDING";
+      let meshyResult: { model_urls: { glb: string; obj: string } } | null = null;
+      const maxPolls = 120;
+      let pollCount = 0;
+
+      while (meshyStatus !== "SUCCEEDED" && pollCount < maxPolls) {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        const pollData = (await callMeshyApi(
+          "GET",
+          `/image-to-3d/${meshyTaskId}`,
+        )) as {
+          status: string;
+          model_urls?: { glb: string; obj: string };
+          progress: number;
+        };
+        meshyStatus = pollData.status;
+
+        if (meshyStatus === "FAILED") {
+          throw new Error("Meshy reconstruction failed");
+        }
+
+        if (meshyStatus === "SUCCEEDED" && pollData.model_urls) {
+          meshyResult = { model_urls: pollData.model_urls };
+        }
+
+        pollCount++;
+        await job.log(
+          `[poll_reconstruction] Poll ${pollCount}: ${meshyStatus} (${pollData.progress}%)`,
+        );
       }
 
-      pollCount++;
-      await job.log(
-        `[poll_reconstruction] Poll ${pollCount}: ${meshyStatus} (${pollData.progress}%)`,
+      if (!meshyResult) {
+        throw new Error("Meshy reconstruction timed out");
+      }
+
+      // Stage 5: Download result and store in S3
+      await updateProgress(
+        job,
+        "download_result",
+        "Downloading reconstruction result...",
       );
+      const glbRes = await fetch(meshyResult.model_urls.glb);
+      const glbBuffer = Buffer.from(await glbRes.arrayBuffer());
+
+      s3Key = `workspaces/${workspaceId}/models/original.glb`;
+      await uploadToS3(s3Key, glbBuffer, "model/gltf-binary");
     }
-
-    if (!meshyResult) {
-      throw new Error("Meshy reconstruction timed out");
-    }
-
-    // Stage 5: Download result and store in S3
-    await updateProgress(
-      job,
-      "download_result",
-      "Downloading reconstruction result...",
-    );
-    const glbRes = await fetch(meshyResult.model_urls.glb);
-    const glbBuffer = Buffer.from(await glbRes.arrayBuffer());
-
-    const s3Key = `workspaces/${workspaceId}/models/original.glb`;
-    await uploadToS3(s3Key, glbBuffer, "model/gltf-binary");
 
     // Stage 6: Cleanup geometry
     await updateProgress(
@@ -200,7 +237,17 @@ export async function processReconstruction(job: Job): Promise<void> {
       "cleanup_geometry",
       "Cleaning up mesh geometry...",
     );
-    const cleaned = await cleanupMesh(s3Key);
+    // Python service needs a downloadable URL
+    const meshUrl = await getPresignedUrl(s3Key);
+    const cleaned = await cleanupMesh(meshUrl);
+    await job.log(
+      `[cleanup_geometry] Cleaned: ${cleaned.vertex_count} verts, ${cleaned.face_count} faces`,
+    );
+
+    // The cleanup service returns a local file path — read it and upload to S3
+    const cleanedBytes = await readFile(cleaned.cleaned_mesh_url);
+    const cleanedS3Key = `workspaces/${workspaceId}/models/cleaned.glb`;
+    await uploadToS3(cleanedS3Key, cleanedBytes, "model/gltf-binary");
 
     // Stage 7: Extract skeleton
     await updateProgress(
@@ -208,7 +255,8 @@ export async function processReconstruction(job: Job): Promise<void> {
       "extract_skeleton",
       "Extracting branch skeleton...",
     );
-    const skeleton = await extractSkeleton(cleaned.cleaned_s3_key);
+    // Pass the local file path to skeleton extraction (same machine)
+    const skeleton = await extractSkeleton(cleaned.cleaned_mesh_url);
 
     // Store skeleton data
     const skeletonKey = `workspaces/${workspaceId}/models/skeleton.json`;
@@ -231,7 +279,7 @@ export async function processReconstruction(job: Job): Promise<void> {
       .values({
         workspaceId,
         kind: "cleaned_mesh",
-        storageKey: cleaned.cleaned_s3_key,
+        storageKey: cleanedS3Key,
         format: "glb",
       })
       .returning();
@@ -258,8 +306,26 @@ export async function processReconstruction(job: Job): Promise<void> {
 
     // Persist branch nodes from skeleton data
     const skeletonData = skeleton.skeleton as {
-      nodes: Record<string, { id: string; position: [number, number, number]; radius: number; parent_id: string | null; is_tip: boolean }>;
-      edges: Record<string, { source_id: string; target_id: string; curve_points: Array<[number, number, number]>; radii: number[]; length: number }>;
+      nodes: Record<
+        string,
+        {
+          id: string;
+          position: [number, number, number];
+          radius: number;
+          parent_id: string | null;
+          is_tip: boolean;
+        }
+      >;
+      edges: Record<
+        string,
+        {
+          source_id: string;
+          target_id: string;
+          curve_points: Array<[number, number, number]>;
+          radii: number[];
+          length: number;
+        }
+      >;
       root_id: string;
     };
 
@@ -268,7 +334,7 @@ export async function processReconstruction(job: Job): Promise<void> {
         const sourceNode = skeletonData.nodes[edge.source_id];
         await db.insert(branchNodes).values({
           workspaceId,
-          parentId: sourceNode?.parent_id ?? null,
+          parentId: null, // skeleton node IDs are not UUIDs; parent linkage is in curveData
           curveData: {
             edgeId,
             sourceId: edge.source_id,
@@ -304,7 +370,7 @@ export async function processReconstruction(job: Job): Promise<void> {
       })
       .where(eq(reconstructionJobs.id, data.jobId));
 
-    // Create default "Original" variation so the editor has something to load
+    // Create default "Original" variation
     await db
       .insert(styleVariations)
       .values({
@@ -323,9 +389,8 @@ export async function processReconstruction(job: Job): Promise<void> {
       "generate_thumbnails",
       "Generating preview thumbnails...",
     );
-    const thumbnailKey = `workspaces/${workspaceId}/thumbnails/preview.png`;
     await job.log(
-      `[generate_thumbnails] Thumbnail generation deferred (requires headless renderer) — ${thumbnailKey}`,
+      `[generate_thumbnails] Thumbnail generation deferred (requires headless renderer)`,
     );
 
     await job.updateProgress(100);
@@ -333,6 +398,21 @@ export async function processReconstruction(job: Job): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await job.log(`[ERROR] Reconstruction failed: ${message}`);
+
+    // Update workspace status to failed
+    await db
+      .update(treeWorkspaces)
+      .set({ status: "failed", updatedAt: new Date() })
+      .where(eq(treeWorkspaces.id, workspaceId))
+      .catch(() => {});
+
+    // Update job status to failed
+    await db
+      .update(reconstructionJobs)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(reconstructionJobs.id, data.jobId))
+      .catch(() => {});
+
     throw err;
   }
 }

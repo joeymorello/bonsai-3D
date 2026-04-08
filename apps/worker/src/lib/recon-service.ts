@@ -16,72 +16,83 @@ async function post<T>(endpoint: string, body: Record<string, unknown>): Promise
   return res.json() as Promise<T>;
 }
 
-export interface QualityCheckResult {
-  scores: number[];
-  passed: boolean;
-  issues: string[];
+// ---------- Quality Check ----------
+
+export interface QualityResult {
+  image_url: string;
+  blur_score: number;
+  exposure_ok: boolean;
+  is_duplicate: boolean;
+  quality_score: number;
+  is_accepted: boolean;
 }
 
-export interface PreprocessResult {
-  processed_paths: string[];
-}
-
-export interface SegmentResult {
-  mask_paths: string[];
-}
-
-export interface CleanupMeshResult {
-  cleaned_s3_key: string;
-}
-
-export interface ExtractSkeletonResult {
-  skeleton: unknown;
+export interface QualityCheckResponse {
+  results: QualityResult[];
 }
 
 /**
  * Check the quality of uploaded photos.
+ * Returns per-image results; caller decides pass/fail.
  */
 export async function qualityCheck(
   imageUrls: string[],
-): Promise<QualityCheckResult> {
-  return post<QualityCheckResult>("/quality-check", { image_urls: imageUrls });
+): Promise<QualityCheckResponse> {
+  return post<QualityCheckResponse>("/quality-check", { image_urls: imageUrls });
 }
 
-/**
- * Preprocess images (background removal, normalization, etc.).
- */
+// ---------- Preprocess ----------
+
+export interface PreprocessResponse {
+  processed_urls: string[];
+  mask_urls: string[];
+}
+
 export async function preprocess(
   imageUrls: string[],
-): Promise<PreprocessResult> {
-  return post<PreprocessResult>("/preprocess", { image_urls: imageUrls });
+): Promise<PreprocessResponse> {
+  return post<PreprocessResponse>("/preprocess", { image_urls: imageUrls });
 }
 
-/**
- * Segment images to extract foreground masks.
- */
+// ---------- Segment ----------
+
+export interface SegmentResponse {
+  mask_urls: string[];
+}
+
 export async function segmentImages(
   imageUrls: string[],
-): Promise<SegmentResult> {
-  return post<SegmentResult>("/segment", { image_urls: imageUrls });
+): Promise<SegmentResponse> {
+  return post<SegmentResponse>("/segment", { image_urls: imageUrls });
 }
 
-/**
- * Clean up a mesh (decimate, smooth, fix normals, etc.).
- */
+// ---------- Cleanup Mesh ----------
+
+export interface CleanupMeshResponse {
+  cleaned_mesh_url: string;
+  vertex_count: number;
+  face_count: number;
+  bounds: Record<string, unknown>;
+}
+
 export async function cleanupMesh(
   meshUrl: string,
-): Promise<CleanupMeshResult> {
-  return post<CleanupMeshResult>("/cleanup-mesh", {
-    s3_key: meshUrl,
-    target_faces: 30000,
+  targetFaces = 30000,
+): Promise<CleanupMeshResponse> {
+  return post<CleanupMeshResponse>("/cleanup-mesh", {
+    mesh_url: meshUrl,
+    target_faces: targetFaces,
   });
 }
 
-/**
- * Extract a branch skeleton from a mesh.
- */
+// ---------- Extract Skeleton ----------
+
+export interface ExtractSkeletonResponse {
+  skeleton: Record<string, unknown>;
+}
+
 export async function extractSkeleton(
   meshUrl: string,
-): Promise<ExtractSkeletonResult> {
-  return post<ExtractSkeletonResult>("/extract-skeleton", { s3_key: meshUrl });
+): Promise<ExtractSkeletonResponse> {
+  return post<ExtractSkeletonResponse>("/extract-skeleton", { mesh_url: meshUrl });
 }
