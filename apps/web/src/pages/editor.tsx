@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useCallback, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getWorkspace, getWorkspaceAssets, listVariations, createVariation } from "@/lib/api";
+import { getWorkspace, getWorkspaceAssets, listVariations, createVariation, exportVariation } from "@/lib/api";
 import { useEditorStore } from "@/stores/editor-store";
 import type { EditorBranch } from "@/stores/editor-store";
 import { Scene } from "@/components/viewer/scene";
+import { ComparisonView } from "@/components/viewer/comparison-view";
 import { Toolbar } from "@/components/toolbar";
 import { Inspector } from "@/components/inspector";
 import type { BranchNodeData } from "@/components/viewer/skeleton-overlay";
@@ -70,6 +71,22 @@ export function Editor() {
   const saveVariation = useEditorStore((s) => s.saveVariation);
   const [showNewVariation, setShowNewVariation] = useState(false);
   const [newVariationName, setNewVariationName] = useState("");
+  const [showExport, setShowExport] = useState(false);
+  const [exportFormat, setExportFormat] = useState<"glb" | "obj">("glb");
+  const [showComparison, setShowComparison] = useState(false);
+
+  const exportMutation = useMutation({
+    mutationFn: () => {
+      if (!activeVariationId) throw new Error("No variation selected");
+      return exportVariation(activeVariationId, exportFormat);
+    },
+    onSuccess: (data) => {
+      if (data.downloadUrl) {
+        window.open(data.downloadUrl, "_blank");
+      }
+      setShowExport(false);
+    },
+  });
 
   const createVariationMutation = useMutation({
     mutationFn: (name: string) => createVariation(id!, { name }),
@@ -139,13 +156,50 @@ export function Editor() {
           )}
         </div>
         <Toolbar />
-        <button
-          onClick={saveVariation}
-          disabled={!isDirty}
-          className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-green-700 disabled:opacity-40"
-        >
-          Save
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={saveVariation}
+            disabled={!isDirty}
+            className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-green-700 disabled:opacity-40"
+          >
+            Save
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowExport(!showExport)}
+              disabled={!activeVariationId}
+              className="rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
+            >
+              Export
+            </button>
+            {showExport && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-gray-600 bg-gray-800 p-3 shadow-xl">
+                <h4 className="mb-2 text-xs font-medium text-gray-300">Export Format</h4>
+                <div className="mb-3 space-y-1">
+                  {(["glb", "obj"] as const).map((fmt) => (
+                    <label key={fmt} className="flex items-center gap-2 text-xs text-gray-300">
+                      <input
+                        type="radio"
+                        name="format"
+                        checked={exportFormat === fmt}
+                        onChange={() => setExportFormat(fmt)}
+                        className="accent-blue-500"
+                      />
+                      {fmt.toUpperCase()}
+                    </label>
+                  ))}
+                </div>
+                <button
+                  onClick={() => exportMutation.mutate()}
+                  disabled={exportMutation.isPending}
+                  className="w-full rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {exportMutation.isPending ? "Exporting..." : "Download"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -223,11 +277,33 @@ export function Editor() {
                 <p className="text-xs text-gray-500">No variations yet</p>
               )}
             </div>
+
+            {/* Compare button */}
+            {variations && variations.length >= 2 && (
+              <button
+                onClick={() => setShowComparison(true)}
+                className="mt-3 w-full rounded border border-gray-600 px-2 py-1.5 text-xs text-gray-400 transition hover:border-blue-500 hover:text-white"
+              >
+                Compare Variations
+              </button>
+            )}
           </div>
         </aside>
 
         {/* Center - 3D Canvas */}
         <main className="relative flex-1">
+          {/* Comparison overlay */}
+          {showComparison && wsAssets?.meshUrl && (
+            <ComparisonView
+              modelUrl={wsAssets.meshUrl}
+              leftBranches={branchNodes}
+              rightBranches={branchNodes}
+              leftLabel={variations?.find((v) => v.id === activeVariationId)?.name ?? "Current"}
+              rightLabel="Original"
+              onClose={() => setShowComparison(false)}
+            />
+          )}
+
           {wsAssets?.meshUrl ? (
             <Scene modelUrl={wsAssets.meshUrl} branchNodes={branchNodes} />
           ) : (

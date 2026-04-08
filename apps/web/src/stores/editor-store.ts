@@ -15,6 +15,7 @@ export interface ViewerState {
   showSkeleton: boolean;
   showWireframe: boolean;
   showFoliage: boolean;
+  clipHeight: number;
 }
 
 export interface SelectionState {
@@ -81,6 +82,9 @@ export interface EditorStore {
   toggleWireframe: () => void;
   toggleFoliage: () => void;
   setCameraPosition: (pos: [number, number, number]) => void;
+  setClipHeight: (h: number) => void;
+  pruneAboveClip: () => void;
+  pruneBelowClip: () => void;
 
   // Branch operations
   bendBranch: (branchId: string, handleIndex: number, delta: [number, number, number]) => void;
@@ -91,6 +95,9 @@ export interface EditorStore {
   // History
   undo: () => void;
   redo: () => void;
+
+  // Style presets
+  applyStylePreset: (apply: (branches: Map<string, EditorBranch>) => Map<string, EditorBranch>) => void;
 
   // Variation
   setActiveVariation: (variationId: string | null) => void;
@@ -105,6 +112,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     showSkeleton: true,
     showWireframe: false,
     showFoliage: true,
+    clipHeight: 0.3,
   },
   selection: {
     selectedBranchId: null,
@@ -169,6 +177,33 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setCameraPosition: (pos) =>
     set((s) => ({ viewer: { ...s.viewer, cameraPosition: pos } })),
 
+  setClipHeight: (h) =>
+    set((s) => ({ viewer: { ...s.viewer, clipHeight: h } })),
+
+  pruneAboveClip: () => {
+    const { branches, viewer } = get();
+    const updated = new Map(branches);
+    for (const [id, branch] of updated) {
+      const above = branch.curvePoints.filter((cp) => cp.position[1] > viewer.clipHeight);
+      if (above.length > branch.curvePoints.length / 2) {
+        updated.set(id, { ...branch, isPruned: true });
+      }
+    }
+    set(() => ({ branches: updated, variation: { ...get().variation, isDirty: true } }));
+  },
+
+  pruneBelowClip: () => {
+    const { branches, viewer } = get();
+    const updated = new Map(branches);
+    for (const [id, branch] of updated) {
+      const below = branch.curvePoints.filter((cp) => cp.position[1] < viewer.clipHeight);
+      if (below.length > branch.curvePoints.length / 2) {
+        updated.set(id, { ...branch, isPruned: true });
+      }
+    }
+    set(() => ({ branches: updated, variation: { ...get().variation, isDirty: true } }));
+  },
+
   // ---- Branch operations --------------------------------------------------
 
   bendBranch: (branchId, handleIndex, delta) => {
@@ -230,6 +265,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       inverse: {},
     };
     pushOperation(set, get, op);
+  },
+
+  // ---- Style presets ------------------------------------------------------
+
+  applyStylePreset: (apply) => {
+    const result = apply(get().branches);
+    set(() => ({ branches: result, variation: { ...get().variation, isDirty: true } }));
   },
 
   // ---- History ------------------------------------------------------------

@@ -43,20 +43,17 @@ app.decorateRequest("userId", "");
 
 const isDevMode = config.jwtSecret === "dev-secret-change-in-production";
 
+// API path prefixes that require auth
+const API_PREFIXES = ["/workspaces", "/variations", "/assets/"];
+
 app.addHook("onRequest", async (request, reply) => {
-  // Skip auth for health, auth routes, and static assets
+  // Only require auth for API routes; skip for static assets, SPA routes, health, auth
+  const url = request.url.split("?")[0]!;
+  const isApiRoute = API_PREFIXES.some((p) => url.startsWith(p));
   if (
-    request.url === "/health" ||
-    request.url.startsWith("/auth/") ||
-    request.url.startsWith("/assets/") ||
-    request.url === "/" ||
-    request.url.endsWith(".html") ||
-    request.url.endsWith(".js") ||
-    request.url.endsWith(".css") ||
-    request.url.endsWith(".svg") ||
-    request.url.endsWith(".png") ||
-    request.url.endsWith(".ico") ||
-    request.url.endsWith(".woff2")
+    !isApiRoute ||
+    url === "/health" ||
+    url.startsWith("/auth/")
   ) return;
 
   if (isDevMode) {

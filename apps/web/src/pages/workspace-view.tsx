@@ -46,8 +46,8 @@ export function WorkspaceView() {
   const reconStatus = reconData
     ? {
         step: reconData.latest?.step ?? "unknown",
-        progress: 0,
-        logs: reconData.latest?.logs ? [reconData.latest.logs] : [],
+        progress: ((reconData.latest as unknown as { progress?: number })?.progress) ?? 0,
+        logs: ((reconData.latest as unknown as { liveLogs?: string[] })?.liveLogs) ?? (reconData.latest?.logs ? [reconData.latest.logs] : []),
         error: reconData.latest?.status === "failed" ? "Reconstruction failed" : null,
       }
     : null;
@@ -165,12 +165,12 @@ export function WorkspaceView() {
             <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-6">
               <div className="mb-2 flex items-center justify-between text-sm font-medium text-yellow-800">
                 <span>{reconStatus.step}</span>
-                <span>{Math.round(reconStatus.progress * 100)}%</span>
+                <span>{Math.round(reconStatus.progress)}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-yellow-200">
                 <div
                   className="h-full rounded-full bg-yellow-500 transition-all"
-                  style={{ width: `${reconStatus.progress * 100}%` }}
+                  style={{ width: `${reconStatus.progress}%` }}
                 />
               </div>
               {reconStatus.logs.length > 0 && (

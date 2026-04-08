@@ -4,6 +4,7 @@ import { OrbitControls, Environment, Grid } from "@react-three/drei";
 import { useEditorStore } from "@/stores/editor-store";
 import { ModelViewer } from "./model-viewer";
 import { SkeletonOverlay } from "./skeleton-overlay";
+import { ClipPlane } from "./clip-plane";
 import type { BranchNodeData } from "./skeleton-overlay";
 
 interface SceneProps {
@@ -55,6 +56,9 @@ function SceneContent({ modelUrl, branchNodes = [] }: SceneProps) {
 
       {/* Skeleton overlay */}
       {showSkeleton && <SkeletonOverlay branchNodes={branchNodes} />}
+
+      {/* Clip plane for pruning tool */}
+      <ClipPlane />
 
       {/* Camera controls */}
       <OrbitControls

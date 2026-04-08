@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { reconstructionJobs, uploadPhotos, treeWorkspaces } from "../db/schema.js";
-import { enqueueReconstructionJob } from "../services/queue.js";
+import { enqueueReconstructionJob, reconstructionQueue } from "../services/queue.js";
 import { presignDownload } from "../services/storage.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
@@ -87,7 +87,34 @@ export async function reconstructionRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: "No reconstruction jobs found" });
       }
 
-      return { jobs, latest: jobs[jobs.length - 1] };
+      const latest = jobs[jobs.length - 1]!;
+
+      // Try to get live progress from BullMQ
+      let progress = 0;
+      let logs: string[] = [];
+      try {
+        // Find the BullMQ job that matches our latest DB job
+        const waiting = await reconstructionQueue.getJobs(["active", "waiting", "completed", "failed"], 0, 20);
+        const bullJob = waiting.find((j) => j.data?.jobId === latest.id);
+        if (bullJob) {
+          progress = typeof bullJob.progress === "number" ? bullJob.progress : 0;
+          logs = await bullJob.getChildrenValues().then(() => []).catch(() => []);
+          // Get logs from BullMQ
+          try {
+            const jobLogs = await reconstructionQueue.getJobLogs(bullJob.id!, 0, 50);
+            logs = jobLogs.logs;
+          } catch { /* ignore */ }
+        }
+      } catch { /* BullMQ query failed, use DB data */ }
+
+      return {
+        jobs,
+        latest: {
+          ...latest,
+          progress,
+          liveLogs: logs,
+        },
+      };
     },
   );
 }

@@ -1,5 +1,6 @@
 import { useEditorStore } from "@/stores/editor-store";
 import type { BranchNodeData } from "@/components/viewer/skeleton-overlay";
+import { STYLE_PRESETS } from "@/lib/style-presets";
 
 interface InspectorProps {
   branches?: BranchNodeData[];
@@ -9,9 +10,65 @@ export function Inspector({ branches = [] }: InspectorProps) {
   const selectedBranchId = useEditorStore(
     (s) => s.selection.selectedBranchId,
   );
+  const activeTool = useEditorStore((s) => s.tool.activeTool);
+  const clipHeight = useEditorStore((s) => s.viewer.clipHeight);
+  const setClipHeight = useEditorStore((s) => s.setClipHeight);
+  const pruneAboveClip = useEditorStore((s) => s.pruneAboveClip);
+  const pruneBelowClip = useEditorStore((s) => s.pruneBelowClip);
   const pruneBranch = useEditorStore((s) => s.pruneBranch);
   const bendBranch = useEditorStore((s) => s.bendBranch);
   const rotateBranch = useEditorStore((s) => s.rotateBranch);
+
+  // Clipper tool inspector
+  if (activeTool === "clipper") {
+    return (
+      <div className="flex flex-col gap-4 p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Clipper Tool
+        </h3>
+        <section>
+          <h4 className="mb-2 text-xs font-medium text-gray-300">Clip Plane Height</h4>
+          <input
+            type="range"
+            min={-0.1}
+            max={1.0}
+            step={0.01}
+            value={clipHeight}
+            onChange={(e) => setClipHeight(parseFloat(e.target.value))}
+            className="w-full accent-red-500"
+          />
+          <p className="mt-1 text-center font-mono text-xs text-gray-400">
+            {clipHeight.toFixed(2)}
+          </p>
+        </section>
+        <section>
+          <h4 className="mb-2 text-xs font-medium text-gray-300">Actions</h4>
+          <div className="space-y-2">
+            <button
+              onClick={pruneAboveClip}
+              className="w-full rounded bg-red-600/80 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-600"
+            >
+              Prune Above Plane
+            </button>
+            <button
+              onClick={pruneBelowClip}
+              className="w-full rounded bg-red-600/80 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-600"
+            >
+              Prune Below Plane
+            </button>
+          </div>
+        </section>
+        <section>
+          <p className="text-xs text-gray-500">
+            Drag the red plane in the viewport or use the slider to position.
+            Then prune branches above or below.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  const applyStylePreset = useEditorStore((s) => s.applyStylePreset);
 
   if (!selectedBranchId) {
     return (
@@ -25,6 +82,24 @@ export function Inspector({ branches = [] }: InspectorProps) {
         <div className="mt-6">
           <h4 className="mb-2 text-xs font-medium text-gray-400">Summary</h4>
           <PropertyRow label="Branches" value={String(branches.length)} />
+        </div>
+
+        {/* Style Presets */}
+        <div className="mt-6">
+          <h4 className="mb-2 text-xs font-medium text-gray-400">Style Presets</h4>
+          <div className="space-y-1.5">
+            {STYLE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => applyStylePreset(preset.apply)}
+                className="w-full rounded border border-gray-600 px-2 py-1.5 text-left text-xs text-gray-300 transition hover:border-green-500 hover:bg-gray-700"
+              >
+                <span className="font-medium">{preset.name}</span>
+                <br />
+                <span className="text-[10px] text-gray-500">{preset.description}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     );
