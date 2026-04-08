@@ -1,4 +1,5 @@
 import type { Job } from "bullmq";
+import { eq } from "drizzle-orm";
 import {
   qualityCheck,
   preprocess,
@@ -7,6 +8,13 @@ import {
   extractSkeleton,
 } from "../lib/recon-service.js";
 import { uploadToS3 } from "../lib/storage.js";
+import { db } from "../lib/db.js";
+import {
+  treeWorkspaces,
+  modelAssets,
+  reconstructionJobs,
+  branchNodes,
+} from "../lib/schema.js";
 
 const MESHY_API_KEY = process.env.MESHY_API_KEY ?? "";
 const MESHY_API_URL = "https://api.meshy.ai/v2";
@@ -209,28 +217,105 @@ export async function processReconstruction(job: Job): Promise<void> {
       "application/json",
     );
 
-    // Stage 8: Publish workspace
+    // Stage 8: Publish workspace — persist assets and update status
     await updateProgress(
       job,
       "publish_workspace",
       "Publishing workspace...",
     );
-    // TODO: Update workspace status in database to 'ready'
-    // TODO: Set originalModelAssetId in DB
+
+    // Create model asset records
+    const [meshAsset] = await db
+      .insert(modelAssets)
+      .values({
+        workspaceId,
+        kind: "cleaned_mesh",
+        storageKey: cleaned.cleaned_s3_key,
+        format: "glb",
+      })
+      .returning();
+
+    const [skeletonAsset] = await db
+      .insert(modelAssets)
+      .values({
+        workspaceId,
+        kind: "skeleton",
+        storageKey: skeletonKey,
+        format: "json",
+      })
+      .returning();
+
+    // Store original mesh asset too
+    await db
+      .insert(modelAssets)
+      .values({
+        workspaceId,
+        kind: "original_mesh",
+        storageKey: s3Key,
+        format: "glb",
+      });
+
+    // Persist branch nodes from skeleton data
+    const skeletonData = skeleton.skeleton as {
+      nodes: Record<string, { id: string; position: [number, number, number]; radius: number; parent_id: string | null; is_tip: boolean }>;
+      edges: Record<string, { source_id: string; target_id: string; curve_points: Array<[number, number, number]>; radii: number[]; length: number }>;
+      root_id: string;
+    };
+
+    if (skeletonData.edges) {
+      for (const [edgeId, edge] of Object.entries(skeletonData.edges)) {
+        const sourceNode = skeletonData.nodes[edge.source_id];
+        await db.insert(branchNodes).values({
+          workspaceId,
+          parentId: sourceNode?.parent_id ?? null,
+          curveData: {
+            edgeId,
+            sourceId: edge.source_id,
+            targetId: edge.target_id,
+            curvePoints: edge.curve_points.map((p, i) => ({
+              position: p,
+              radius: edge.radii[i] ?? edge.radii[0] ?? 0.01,
+            })),
+            length: edge.length,
+          },
+          radius: edge.radii[0] ?? 0.01,
+        });
+      }
+    }
+
+    // Update workspace status to ready
+    await db
+      .update(treeWorkspaces)
+      .set({
+        status: "ready",
+        originalModelAssetId: meshAsset!.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(treeWorkspaces.id, workspaceId));
+
+    // Update reconstruction job status
+    await db
+      .update(reconstructionJobs)
+      .set({
+        status: "completed",
+        step: "publish",
+        finishedAt: new Date(),
+      })
+      .where(eq(reconstructionJobs.id, data.jobId));
+
     await job.log(
-      `[publish_workspace] Workspace ${workspaceId} model at ${cleaned.cleaned_s3_key}`,
+      `[publish_workspace] Workspace ${workspaceId} published — mesh: ${meshAsset!.id}, skeleton: ${skeletonAsset!.id}`,
     );
 
-    // Stage 9: Generate thumbnails
+    // Stage 9: Generate thumbnails (placeholder — requires headless GL)
     await updateProgress(
       job,
       "generate_thumbnails",
       "Generating preview thumbnails...",
     );
-    // TODO: Render thumbnail images from 3D model
     const thumbnailKey = `workspaces/${workspaceId}/thumbnails/preview.png`;
     await job.log(
-      `[generate_thumbnails] Would generate thumbnail at ${thumbnailKey} (placeholder)`,
+      `[generate_thumbnails] Thumbnail generation deferred (requires headless renderer) — ${thumbnailKey}`,
     );
 
     await job.updateProgress(100);

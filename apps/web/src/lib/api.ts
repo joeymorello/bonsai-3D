@@ -151,6 +151,38 @@ export interface AssetManifest {
   textureUrls: string[];
 }
 
+export interface WorkspaceAssets {
+  assets: Array<{
+    id: string;
+    workspaceId: string;
+    kind: string;
+    storageKey: string;
+    format: string | null;
+    version: number;
+    metadataJson: unknown;
+  }>;
+  meshUrl: string | null;
+  skeletonUrl: string | null;
+  meshAssetId: string | null;
+  skeletonAssetId: string | null;
+  branches: Array<{
+    id: string;
+    workspaceId: string;
+    parentId: string | null;
+    curveData: {
+      edgeId: string;
+      sourceId: string;
+      targetId: string;
+      curvePoints: Array<{ position: [number, number, number]; radius: number }>;
+      length: number;
+    } | null;
+    radius: number | null;
+    restTransform: unknown;
+    speciesTag: string | null;
+    isPruned: boolean | null;
+  }>;
+}
+
 // ---- Workspaces -----------------------------------------------------------
 
 export function listWorkspaces(): Promise<Workspace[]> {
@@ -293,4 +325,8 @@ export function getDownloadUrl(
   return request<{ url: string }>(
     `/assets/${assetId}/download-url`,
   );
+}
+
+export function getWorkspaceAssets(workspaceId: string): Promise<WorkspaceAssets> {
+  return request<WorkspaceAssets>(`/workspaces/${workspaceId}/assets`);
 }

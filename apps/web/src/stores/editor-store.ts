@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  bendBranch as applyBend,
+  type CurvePoint,
+} from "@/lib/deformation";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,12 +48,26 @@ export interface OperationHistory {
 // Store
 // ---------------------------------------------------------------------------
 
+/** Lightweight branch data as stored in the editor. */
+export interface EditorBranch {
+  id: string;
+  parentId: string | null;
+  curvePoints: CurvePoint[];
+  radius: number;
+  isPruned: boolean;
+}
+
 export interface EditorStore {
   viewer: ViewerState;
   selection: SelectionState;
   tool: ToolState;
   variation: VariationState;
   history: OperationHistory;
+  branches: Map<string, EditorBranch>;
+
+  // Branch data management
+  loadBranches: (branches: EditorBranch[]) => void;
+  getBranch: (id: string) => EditorBranch | undefined;
 
   // Selection
   selectBranch: (branchId: string | null) => void;
@@ -103,6 +121,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     undoStack: [],
     redoStack: [],
   },
+  branches: new Map(),
+
+  // ---- Branch data --------------------------------------------------------
+
+  loadBranches: (branches) =>
+    set(() => ({
+      branches: new Map(branches.map((b) => [b.id, b])),
+    })),
+
+  getBranch: (id) => get().branches.get(id),
 
   // ---- Selection ----------------------------------------------------------
 
@@ -144,6 +172,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   // ---- Branch operations --------------------------------------------------
 
   bendBranch: (branchId, handleIndex, delta) => {
+    const branch = get().branches.get(branchId);
+    if (!branch) return;
+
+    const newPoints = applyBend(branch.curvePoints, handleIndex, delta);
+    const updated = new Map(get().branches);
+    updated.set(branchId, { ...branch, curvePoints: newPoints });
+
     const op: OperationRecord = {
       type: "bend",
       branchId,
@@ -153,6 +188,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         delta: [-delta[0], -delta[1], -delta[2]],
       },
     };
+    set(() => ({ branches: updated }));
     pushOperation(set, get, op);
   },
 
@@ -167,12 +203,22 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   pruneBranch: (branchId) => {
+    const branch = get().branches.get(branchId);
+    if (!branch) return;
+
+    const updated = new Map(get().branches);
+    updated.set(branchId, { ...branch, isPruned: true });
+
     const op: OperationRecord = {
       type: "prune",
       branchId,
       params: {},
       inverse: {},
     };
+    set(() => ({
+      branches: updated,
+      selection: { selectedBranchId: null, selectedClusterId: null },
+    }));
     pushOperation(set, get, op);
   },
 

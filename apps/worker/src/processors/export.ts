@@ -1,5 +1,8 @@
 import type { Job } from "bullmq";
-import { downloadFromS3, uploadToS3 } from "../lib/storage.js";
+import { eq } from "drizzle-orm";
+import { downloadFromS3, uploadToS3, getPresignedUrl } from "../lib/storage.js";
+import { db } from "../lib/db.js";
+import { modelAssets, styleVariations, branchNodes } from "../lib/schema.js";
 
 interface ExportJobData {
   workspaceId: string;
@@ -14,6 +17,8 @@ interface EditOperation {
   params: Record<string, unknown>;
 }
 
+const RECON_SERVICE_URL = process.env.RECON_SERVICE_URL ?? "http://localhost:8000";
+
 export async function processExport(job: Job): Promise<void> {
   const data = job.data as ExportJobData;
   const { workspaceId, variationId, format, editOperations } = data;
@@ -22,42 +27,75 @@ export async function processExport(job: Job): Promise<void> {
     await job.updateProgress(10);
     await job.log("[export] Loading base model...");
 
-    // Load the base model from S3
-    const baseModelKey = `workspaces/${workspaceId}/models/original.glb`;
-    const modelBytes = await downloadFromS3(baseModelKey);
+    // Find the cleaned mesh asset from DB
+    const meshAssets = await db
+      .select()
+      .from(modelAssets)
+      .where(eq(modelAssets.workspaceId, workspaceId));
+    const meshAsset = meshAssets.find((a) => a.kind === "cleaned_mesh") ?? meshAssets.find((a) => a.kind === "original_mesh");
+
+    if (!meshAsset) throw new Error("No mesh asset found for workspace");
+
+    const modelBytes = await downloadFromS3(meshAsset.storageKey);
 
     await job.updateProgress(30);
     await job.log("[export] Base model loaded");
 
     // Load skeleton data
-    const skeletonKey = `workspaces/${workspaceId}/models/skeleton.json`;
+    const skeletonAsset = meshAssets.find((a) => a.kind === "skeleton");
     let skeleton: unknown = null;
-    try {
-      const skeletonBuffer = await downloadFromS3(skeletonKey);
-      skeleton = JSON.parse(skeletonBuffer.toString("utf-8"));
-      await job.log("[export] Skeleton data loaded");
-    } catch {
-      await job.log("[export] No skeleton data found — skipping deformation");
+    if (skeletonAsset) {
+      try {
+        const skeletonBuffer = await downloadFromS3(skeletonAsset.storageKey);
+        skeleton = JSON.parse(skeletonBuffer.toString("utf-8"));
+        await job.log("[export] Skeleton data loaded");
+      } catch {
+        await job.log("[export] Failed to load skeleton — skipping deformation");
+      }
     }
 
     await job.updateProgress(40);
 
-    // Apply edit operations to the model
+    // Apply edit operations via the Python deformation service
     await job.log(
       `[export] Applying ${editOperations.length} edit operations...`,
     );
 
-    // TODO: Apply deformation operations using skeleton service
-    // For v1, just copy the base model as the export (full deformation comes later)
     let processedModel: Uint8Array = modelBytes;
     if (editOperations.length > 0 && skeleton) {
-      await job.log(
-        "[export] Skeleton deformation not yet implemented — using base model",
-      );
+      try {
+        // Upload base model to a temp key for the deformation service
+        const tempKey = `workspaces/${workspaceId}/exports/_temp_base.glb`;
+        await uploadToS3(tempKey, modelBytes, "model/gltf-binary");
+        const tempUrl = await getPresignedUrl(tempKey);
+
+        const deformRes = await fetch(`${RECON_SERVICE_URL}/deform`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mesh_url: tempUrl,
+            skeleton,
+            operations: editOperations,
+          }),
+        });
+
+        if (deformRes.ok) {
+          const result = (await deformRes.json()) as { deformed_s3_key: string };
+          processedModel = await downloadFromS3(result.deformed_s3_key);
+          await job.log("[export] Deformation applied successfully");
+        } else {
+          await job.log(
+            `[export] Deformation service returned ${deformRes.status} — using base model`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await job.log(`[export] Deformation failed (${msg}) — using base model`);
+      }
     }
 
     await job.updateProgress(70);
-    await job.log("[export] Edit operations applied");
+    await job.log("[export] Edit operations processed");
 
     // Convert to requested format if needed
     let outputBuffer: Uint8Array = processedModel;
@@ -66,16 +104,13 @@ export async function processExport(job: Job): Promise<void> {
 
     switch (format) {
       case "glb":
-        // Already in GLB format
         break;
       case "obj":
-        // TODO: Convert GLB to OBJ
         contentType = "text/plain";
         fileExtension = "obj";
         await job.log("[export] OBJ conversion not yet implemented — exporting as GLB");
         break;
       case "usdz":
-        // TODO: Convert GLB to USDZ
         contentType = "model/vnd.usdz+zip";
         fileExtension = "usdz";
         await job.log("[export] USDZ conversion not yet implemented — exporting as GLB");
@@ -88,7 +123,21 @@ export async function processExport(job: Job): Promise<void> {
     const exportKey = `workspaces/${workspaceId}/exports/${variationId}.${fileExtension}`;
     await uploadToS3(exportKey, outputBuffer, contentType);
 
-    // TODO: Update variation with snapshot asset ID in DB
+    // Create asset record and link to variation
+    const [exportAsset] = await db
+      .insert(modelAssets)
+      .values({
+        workspaceId,
+        kind: "preview_glb",
+        storageKey: exportKey,
+        format: fileExtension,
+      })
+      .returning();
+
+    await db
+      .update(styleVariations)
+      .set({ snapshotAssetId: exportAsset!.id })
+      .where(eq(styleVariations.id, variationId));
 
     await job.updateProgress(100);
     await job.log(`[export] Export complete: ${exportKey}`);

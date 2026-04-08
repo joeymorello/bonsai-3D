@@ -1,10 +1,17 @@
 import { useEditorStore } from "@/stores/editor-store";
+import type { BranchNodeData } from "@/components/viewer/skeleton-overlay";
 
-export function Inspector() {
+interface InspectorProps {
+  branches?: BranchNodeData[];
+}
+
+export function Inspector({ branches = [] }: InspectorProps) {
   const selectedBranchId = useEditorStore(
     (s) => s.selection.selectedBranchId,
   );
   const pruneBranch = useEditorStore((s) => s.pruneBranch);
+  const bendBranch = useEditorStore((s) => s.bendBranch);
+  const rotateBranch = useEditorStore((s) => s.rotateBranch);
 
   if (!selectedBranchId) {
     return (
@@ -15,9 +22,28 @@ export function Inspector() {
         <p className="mt-4 text-center text-xs text-gray-500">
           Select a branch to see its properties.
         </p>
+        <div className="mt-6">
+          <h4 className="mb-2 text-xs font-medium text-gray-400">Summary</h4>
+          <PropertyRow label="Branches" value={String(branches.length)} />
+        </div>
       </div>
     );
   }
+
+  const branch = branches.find((b) => b.id === selectedBranchId);
+  const pts = branch?.curvePoints ?? [];
+  const startPt = pts[0]?.position;
+  const endPt = pts[pts.length - 1]?.position;
+  const branchLength = branch
+    ? pts.reduce((sum, cp, i) => {
+        if (i === 0) return 0;
+        const prev = pts[i - 1]!.position;
+        const dx = cp.position[0] - prev[0];
+        const dy = cp.position[1] - prev[1];
+        const dz = cp.position[2] - prev[2];
+        return sum + Math.sqrt(dx * dx + dy * dy + dz * dz);
+      }, 0)
+    : 0;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -29,24 +55,55 @@ export function Inspector() {
       <section>
         <h4 className="mb-2 text-xs font-medium text-gray-300">Branch</h4>
         <div className="space-y-2">
-          <PropertyRow label="ID" value={selectedBranchId} />
-          <PropertyRow label="Name" value={`branch_${selectedBranchId.slice(0, 6)}`} />
-          <PropertyRow label="Parent" value="--" />
+          <PropertyRow label="ID" value={selectedBranchId.slice(0, 8)} />
+          <PropertyRow label="Points" value={String(pts.length)} />
+          <PropertyRow label="Parent" value={branch?.parentId?.slice(0, 8) ?? "root"} />
         </div>
       </section>
 
-      {/* Transform */}
+      {/* Position (start point) */}
+      {startPt && (
+        <section>
+          <h4 className="mb-2 text-xs font-medium text-gray-300">Start Point</h4>
+          <div className="space-y-1.5">
+            <TransformInput
+              label="X"
+              value={startPt[0]}
+              onChange={(v) => bendBranch(selectedBranchId, 0, [v - startPt[0], 0, 0])}
+            />
+            <TransformInput
+              label="Y"
+              value={startPt[1]}
+              onChange={(v) => bendBranch(selectedBranchId, 0, [0, v - startPt[1], 0])}
+            />
+            <TransformInput
+              label="Z"
+              value={startPt[2]}
+              onChange={(v) => bendBranch(selectedBranchId, 0, [0, 0, v - startPt[2]])}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Rotation */}
       <section>
-        <h4 className="mb-2 text-xs font-medium text-gray-300">Transform</h4>
+        <h4 className="mb-2 text-xs font-medium text-gray-300">Rotate</h4>
         <div className="space-y-1.5">
-          <TransformInput label="Pos X" value={0} />
-          <TransformInput label="Pos Y" value={0} />
-          <TransformInput label="Pos Z" value={0} />
-        </div>
-        <div className="mt-2 space-y-1.5">
-          <TransformInput label="Rot X" value={0} />
-          <TransformInput label="Rot Y" value={0} />
-          <TransformInput label="Rot Z" value={0} />
+          <TransformInput
+            label="Rot X"
+            value={0}
+            onChange={(v) => rotateBranch(selectedBranchId, [1, 0, 0], v * Math.PI / 180)}
+          />
+          <TransformInput
+            label="Rot Y"
+            value={0}
+            onChange={(v) => rotateBranch(selectedBranchId, [0, 1, 0], v * Math.PI / 180)}
+          />
+          <TransformInput
+            label="Rot Z"
+            value={0}
+            onChange={(v) => rotateBranch(selectedBranchId, [0, 0, 1], v * Math.PI / 180)}
+          />
         </div>
       </section>
 
@@ -54,9 +111,8 @@ export function Inspector() {
       <section>
         <h4 className="mb-2 text-xs font-medium text-gray-300">Properties</h4>
         <div className="space-y-2">
-          <PropertyRow label="Radius" value="0.02" />
-          <PropertyRow label="Curvature" value="0.15" />
-          <PropertyRow label="Length" value="0.34" />
+          <PropertyRow label="Radius" value={(branch?.radius ?? 0).toFixed(4)} />
+          <PropertyRow label="Length" value={branchLength.toFixed(4)} />
         </div>
       </section>
 
@@ -83,14 +139,32 @@ function PropertyRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TransformInput({ label, value }: { label: string; value: number }) {
+function TransformInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange?: (value: number) => void;
+}) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-8 text-xs text-gray-500">{label}</span>
       <input
         type="number"
         step={0.01}
-        defaultValue={value}
+        defaultValue={Number(value.toFixed(4))}
+        onBlur={(e) => {
+          const v = parseFloat(e.target.value);
+          if (!isNaN(v) && onChange) onChange(v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(v) && onChange) onChange(v);
+          }
+        }}
         className="flex-1 rounded border border-gray-600 bg-gray-700 px-2 py-1 text-xs text-gray-200 focus:border-green-500 focus:outline-none"
       />
     </div>

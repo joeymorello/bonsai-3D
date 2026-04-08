@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { CatmullRomCurve3, Vector3, TubeGeometry } from "three";
 import { useEditorStore } from "@/stores/editor-store";
 
 export interface BranchNodeData {
   id: string;
+  parentId: string | null;
   curvePoints: Array<{ position: [number, number, number]; radius: number }>;
+  radius: number;
 }
 
 interface SkeletonOverlayProps {
@@ -14,9 +16,17 @@ interface SkeletonOverlayProps {
 function BranchTube({
   node,
   isSelected,
+  isHovered,
+  onPointerOver,
+  onPointerOut,
+  onClick,
 }: {
   node: BranchNodeData;
   isSelected: boolean;
+  isHovered: boolean;
+  onPointerOver: () => void;
+  onPointerOut: () => void;
+  onClick: (e: { stopPropagation: () => void }) => void;
 }) {
   const geometry = useMemo(() => {
     if (node.curvePoints.length < 2) return null;
@@ -41,12 +51,20 @@ function BranchTube({
 
   if (!geometry) return null;
 
+  const color = isSelected ? "#ffcc00" : isHovered ? "#66ddff" : "#00ccff";
+  const opacity = isSelected ? 0.8 : isHovered ? 0.6 : 0.4;
+
   return (
-    <mesh geometry={geometry}>
+    <mesh
+      geometry={geometry}
+      onClick={onClick}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+    >
       <meshBasicMaterial
-        color={isSelected ? "#ffcc00" : "#00ccff"}
+        color={color}
         transparent
-        opacity={isSelected ? 0.8 : 0.4}
+        opacity={opacity}
         depthTest={false}
       />
     </mesh>
@@ -83,24 +101,42 @@ export function SkeletonOverlay({ branchNodes }: SkeletonOverlayProps) {
   const selectedBranchId = useEditorStore(
     (s) => s.selection.selectedBranchId,
   );
+  const selectBranch = useEditorStore((s) => s.selectBranch);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  const handleClick = useCallback(
+    (nodeId: string) => (e: { stopPropagation: () => void }) => {
+      e.stopPropagation();
+      selectBranch(nodeId === selectedBranchId ? null : nodeId);
+    },
+    [selectBranch, selectedBranchId],
+  );
 
   return (
     <group>
-      {branchNodes.map((node) => (
-        <group key={node.id}>
-          <BranchTube
-            node={node}
-            isSelected={node.id === selectedBranchId}
-          />
-          {node.curvePoints.map((cp, i) => (
-            <ControlPointHandle
-              key={i}
-              position={cp.position}
-              nodeId={node.id}
+      {branchNodes.map((node) => {
+        const isSelected = node.id === selectedBranchId;
+        return (
+          <group key={node.id}>
+            <BranchTube
+              node={node}
+              isSelected={isSelected}
+              isHovered={node.id === hoveredId}
+              onPointerOver={() => setHoveredId(node.id)}
+              onPointerOut={() => setHoveredId(null)}
+              onClick={handleClick(node.id)}
             />
-          ))}
-        </group>
-      ))}
+            {isSelected &&
+              node.curvePoints.map((cp, i) => (
+                <ControlPointHandle
+                  key={i}
+                  position={cp.position}
+                  nodeId={node.id}
+                />
+              ))}
+          </group>
+        );
+      })}
     </group>
   );
 }

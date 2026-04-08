@@ -1,10 +1,13 @@
+import { useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getWorkspace, getAssetManifest, listVariations } from "@/lib/api";
+import { getWorkspace, getWorkspaceAssets, listVariations } from "@/lib/api";
 import { useEditorStore } from "@/stores/editor-store";
+import type { EditorBranch } from "@/stores/editor-store";
 import { Scene } from "@/components/viewer/scene";
 import { Toolbar } from "@/components/toolbar";
 import { Inspector } from "@/components/inspector";
+import type { BranchNodeData } from "@/components/viewer/skeleton-overlay";
 
 export function Editor() {
   const { id } = useParams<{ id: string }>();
@@ -15,9 +18,9 @@ export function Editor() {
     enabled: !!id,
   });
 
-  const { data: manifest } = useQuery({
-    queryKey: ["asset-manifest", id],
-    queryFn: () => getAssetManifest(id!),
+  const { data: wsAssets } = useQuery({
+    queryKey: ["workspace-assets", id],
+    queryFn: () => getWorkspaceAssets(id!),
     enabled: !!id,
   });
 
@@ -26,6 +29,39 @@ export function Editor() {
     queryFn: () => listVariations(id!),
     enabled: !!id,
   });
+
+  const loadBranches = useEditorStore((s) => s.loadBranches);
+  const storeBranches = useEditorStore((s) => s.branches);
+
+  // Load branches from API into the editor store (once)
+  useEffect(() => {
+    if (!wsAssets?.branches || storeBranches.size > 0) return;
+    const editorBranches: EditorBranch[] = wsAssets.branches
+      .filter((b) => b.curveData)
+      .map((b) => ({
+        id: b.id,
+        parentId: b.parentId,
+        curvePoints: (b.curveData as { curvePoints: Array<{ position: [number, number, number]; radius: number }> }).curvePoints ?? [],
+        radius: b.radius ?? 0.01,
+        isPruned: b.isPruned ?? false,
+      }));
+    loadBranches(editorBranches);
+  }, [wsAssets?.branches, loadBranches, storeBranches.size]);
+
+  // Derive renderable branch nodes from the store (reactive to edits)
+  const branchNodes: BranchNodeData[] = useMemo(() => {
+    const result: BranchNodeData[] = [];
+    for (const branch of storeBranches.values()) {
+      if (branch.isPruned || branch.curvePoints.length < 2) continue;
+      result.push({
+        id: branch.id,
+        parentId: branch.parentId,
+        curvePoints: branch.curvePoints,
+        radius: branch.radius,
+      });
+    }
+    return result;
+  }, [storeBranches]);
 
   const activeVariationId = useEditorStore((s) => s.variation.activeVariationId);
   const setActiveVariation = useEditorStore((s) => s.setActiveVariation);
@@ -106,8 +142,8 @@ export function Editor() {
 
         {/* Center - 3D Canvas */}
         <main className="relative flex-1">
-          {manifest ? (
-            <Scene modelUrl={manifest.meshUrl} />
+          {wsAssets?.meshUrl ? (
+            <Scene modelUrl={wsAssets.meshUrl} branchNodes={branchNodes} />
           ) : (
             <div className="flex h-full items-center justify-center text-gray-500">
               Loading 3D model...
@@ -117,7 +153,7 @@ export function Editor() {
 
         {/* Right Sidebar - Inspector */}
         <aside className="w-64 border-l border-gray-700 bg-gray-800">
-          <Inspector />
+          <Inspector branches={branchNodes} />
         </aside>
       </div>
     </div>

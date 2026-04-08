@@ -4,12 +4,14 @@ import { OrbitControls, Environment, Grid } from "@react-three/drei";
 import { useEditorStore } from "@/stores/editor-store";
 import { ModelViewer } from "./model-viewer";
 import { SkeletonOverlay } from "./skeleton-overlay";
+import type { BranchNodeData } from "./skeleton-overlay";
 
 interface SceneProps {
   modelUrl: string;
+  branchNodes?: BranchNodeData[];
 }
 
-function SceneContent({ modelUrl }: SceneProps) {
+function SceneContent({ modelUrl, branchNodes = [] }: SceneProps) {
   const showSkeleton = useEditorStore((s) => s.viewer.showSkeleton);
   const showWireframe = useEditorStore((s) => s.viewer.showWireframe);
 
@@ -52,7 +54,7 @@ function SceneContent({ modelUrl }: SceneProps) {
       </Suspense>
 
       {/* Skeleton overlay */}
-      {showSkeleton && <SkeletonOverlay branchNodes={[]} />}
+      {showSkeleton && <SkeletonOverlay branchNodes={branchNodes} />}
 
       {/* Camera controls */}
       <OrbitControls
@@ -67,7 +69,7 @@ function SceneContent({ modelUrl }: SceneProps) {
   );
 }
 
-export function Scene({ modelUrl }: SceneProps) {
+export function Scene({ modelUrl, branchNodes = [] }: SceneProps) {
   return (
     <Canvas
       shadows
@@ -76,7 +78,7 @@ export function Scene({ modelUrl }: SceneProps) {
       gl={{ antialias: true, alpha: false }}
     >
       <color attach="background" args={["#1a1a2e"]} />
-      <SceneContent modelUrl={modelUrl} />
+      <SceneContent modelUrl={modelUrl} branchNodes={branchNodes} />
     </Canvas>
   );
 }
