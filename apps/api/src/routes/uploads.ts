@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import multipart from "@fastify/multipart";
 import { db } from "../db/index.js";
 import { uploadPhotos, treeWorkspaces } from "../db/schema.js";
-import { uploadBuffer } from "../services/storage.js";
+import { uploadBuffer, presignDownload } from "../services/storage.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 
@@ -55,15 +55,22 @@ export async function uploadRoutes(app: FastifyInstance) {
     },
   );
 
-  // List photos for workspace
+  // List photos for workspace (with presigned URLs)
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/photos",
     async (request) => {
       const { id: workspaceId } = WorkspaceIdParam.parse(request.params);
-      return db
+      const photos = await db
         .select()
         .from(uploadPhotos)
         .where(eq(uploadPhotos.workspaceId, workspaceId));
+
+      return Promise.all(
+        photos.map(async (photo) => ({
+          ...photo,
+          url: await presignDownload(photo.storageKey),
+        })),
+      );
     },
   );
 }

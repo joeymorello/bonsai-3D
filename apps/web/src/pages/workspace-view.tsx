@@ -136,9 +136,18 @@ export function WorkspaceView() {
                     key={photo.id}
                     className="group relative aspect-square overflow-hidden rounded-lg bg-gray-200"
                   >
-                    <div className="flex h-full items-center justify-center text-xs text-gray-400">
-                      {(photo as unknown as { storageKey: string }).storageKey?.split("/").pop()?.slice(0, 8)}
-                    </div>
+                    {(photo as unknown as { url?: string }).url ? (
+                      <img
+                        src={(photo as unknown as { url: string }).url}
+                        alt="Bonsai photo"
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-xs text-gray-400">
+                        {(photo as unknown as { storageKey: string }).storageKey?.split("/").pop()?.slice(0, 8)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { getWorkspace, getWorkspaceAssets, listVariations } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { getWorkspace, getWorkspaceAssets, listVariations, createVariation } from "@/lib/api";
 import { useEditorStore } from "@/stores/editor-store";
 import type { EditorBranch } from "@/stores/editor-store";
 import { Scene } from "@/components/viewer/scene";
@@ -63,10 +63,30 @@ export function Editor() {
     return result;
   }, [storeBranches]);
 
+  const queryClient = useQueryClient();
   const activeVariationId = useEditorStore((s) => s.variation.activeVariationId);
   const setActiveVariation = useEditorStore((s) => s.setActiveVariation);
   const isDirty = useEditorStore((s) => s.variation.isDirty);
   const saveVariation = useEditorStore((s) => s.saveVariation);
+  const [showNewVariation, setShowNewVariation] = useState(false);
+  const [newVariationName, setNewVariationName] = useState("");
+
+  const createVariationMutation = useMutation({
+    mutationFn: (name: string) => createVariation(id!, { name }),
+    onSuccess: (v) => {
+      queryClient.invalidateQueries({ queryKey: ["variations", id] });
+      setActiveVariation(v.id);
+      setShowNewVariation(false);
+      setNewVariationName("");
+    },
+  });
+
+  // Auto-select first variation if none selected
+  useEffect(() => {
+    if (!activeVariationId && variations && variations.length > 0) {
+      setActiveVariation(variations[0]!.id);
+    }
+  }, [activeVariationId, variations, setActiveVariation]);
 
   // Keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -146,9 +166,45 @@ export function Editor() {
           </div>
 
           <div className="flex-1 overflow-auto p-3">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Variations
-            </h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Variations
+              </h3>
+              <button
+                onClick={() => setShowNewVariation(true)}
+                className="rounded px-1.5 py-0.5 text-xs text-gray-400 transition hover:bg-gray-700 hover:text-white"
+                title="New Variation"
+              >
+                +
+              </button>
+            </div>
+            {showNewVariation && (
+              <form
+                className="mb-2 flex gap-1"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (newVariationName.trim()) {
+                    createVariationMutation.mutate(newVariationName.trim());
+                  }
+                }}
+              >
+                <input
+                  type="text"
+                  value={newVariationName}
+                  onChange={(e) => setNewVariationName(e.target.value)}
+                  placeholder="Name..."
+                  autoFocus
+                  className="flex-1 rounded border border-gray-600 bg-gray-700 px-2 py-1 text-xs text-gray-200 focus:border-green-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={createVariationMutation.isPending}
+                  className="rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700"
+                >
+                  Add
+                </button>
+              </form>
+            )}
             <div className="space-y-1">
               {variations?.map((v) => (
                 <button

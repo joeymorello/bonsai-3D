@@ -14,6 +14,7 @@ import {
   modelAssets,
   reconstructionJobs,
   branchNodes,
+  styleVariations,
 } from "../lib/schema.js";
 
 const MESHY_API_KEY = process.env.MESHY_API_KEY ?? "";
@@ -302,6 +303,15 @@ export async function processReconstruction(job: Job): Promise<void> {
         finishedAt: new Date(),
       })
       .where(eq(reconstructionJobs.id, data.jobId));
+
+    // Create default "Original" variation so the editor has something to load
+    await db
+      .insert(styleVariations)
+      .values({
+        workspaceId,
+        name: "Original",
+        basedOnModelAssetId: meshAsset!.id,
+      });
 
     await job.log(
       `[publish_workspace] Workspace ${workspaceId} published — mesh: ${meshAsset!.id}, skeleton: ${skeletonAsset!.id}`,
