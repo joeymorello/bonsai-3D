@@ -56,9 +56,10 @@ def reconstruct_surface(
     weight_sum = np.zeros(grid_dims, dtype=np.float64)
 
     tree = KDTree(points)
-    # Influence radius should be several voxels wide to fill gaps in the SDF
-    radius_voxels = 4
-    sigma = voxel_size * 2.5  # Gaussian spread covers ~3 voxels
+    # Influence radius — wider = smoother but slower
+    # Use 5 voxels so the SDF is well-defined between sparse points
+    radius_voxels = 5
+    sigma = voxel_size * 3.0
     sigma_sq = sigma ** 2
 
     for i in range(n):

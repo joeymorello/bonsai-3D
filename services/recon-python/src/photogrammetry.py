@@ -58,9 +58,9 @@ class _PairMatch(NamedTuple):
 # Pipeline constants
 # ---------------------------------------------------------------------------
 
-_MAX_IMAGE_DIM = 1536          # resize longest side to this
-_SIFT_N_FEATURES = 8000
-_CROSS_CHECK_TOP_N = 1000      # keep top N cross-check matches per pair
+_MAX_IMAGE_DIM = 2048          # resize longest side to this (higher = more features)
+_SIFT_N_FEATURES = 16000       # extract more features for denser reconstruction
+_CROSS_CHECK_TOP_N = 2000      # keep top N cross-check matches per pair
 _MIN_MATCHES_FOR_POSE = 15
 _MIN_INLIERS_TRIANGULATE = 8
 _RANSAC_CONFIDENCE = 0.999
@@ -451,14 +451,14 @@ def _build_mesh(points: np.ndarray, colors: np.ndarray) -> trimesh.Trimesh:
     try:
         from .surface_reconstruction import reconstruct_surface
 
-        # Scale grid resolution based on point count
-        grid_res = min(max(int(n ** 0.33 * 3), 50), 150)
+        # Scale grid resolution based on point count — higher = more detail
+        grid_res = min(max(int(n ** 0.4 * 2), 80), 200)
         verts, faces, vcols = reconstruct_surface(
             points, colors,
             grid_resolution=grid_res,
-            normal_k=min(20, n // 2),
-            smoothing_sigma=1.2,
-            laplacian_iterations=5,
+            normal_k=min(25, n // 2),
+            smoothing_sigma=0.8,
+            laplacian_iterations=3,
         )
         rgba = np.hstack([vcols, np.full((len(vcols), 1), 255, dtype=np.uint8)])
         mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=rgba, process=True)
