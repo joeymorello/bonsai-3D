@@ -436,9 +436,10 @@ def _alpha_shape_mesh(
 
 
 def _build_mesh(points: np.ndarray, colors: np.ndarray) -> trimesh.Trimesh:
-    """Build a triangle mesh from a coloured point cloud.
+    """Build a smooth triangle mesh from a coloured point cloud.
 
-    Tries alpha-shape surface extraction first, then falls back to convex hull.
+    Uses volumetric SDF + marching cubes + Laplacian smoothing for quality.
+    Falls back to alpha shape / convex hull if that fails.
     """
     n = len(points)
     if n < 4:
@@ -446,14 +447,34 @@ def _build_mesh(points: np.ndarray, colors: np.ndarray) -> trimesh.Trimesh:
 
     logger.info("Building mesh from %d points ...", n)
 
-    # Attempt 1: alpha shape
+    # Primary: volumetric surface reconstruction (smooth, high quality)
+    try:
+        from .surface_reconstruction import reconstruct_surface
+
+        # Scale grid resolution based on point count
+        grid_res = min(max(int(n ** 0.33 * 3), 50), 150)
+        verts, faces, vcols = reconstruct_surface(
+            points, colors,
+            grid_resolution=grid_res,
+            normal_k=min(20, n // 2),
+            smoothing_sigma=1.2,
+            laplacian_iterations=5,
+        )
+        rgba = np.hstack([vcols, np.full((len(vcols), 1), 255, dtype=np.uint8)])
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_colors=rgba, process=True)
+        logger.info("Volumetric mesh: %d verts, %d faces", len(mesh.vertices), len(mesh.faces))
+        return mesh
+    except Exception as e:
+        logger.warning("Volumetric reconstruction failed: %s — trying alpha shape", e)
+
+    # Fallback 1: alpha shape
     mesh = _alpha_shape_mesh(points, colors)
     if mesh is not None and len(mesh.faces) >= 4:
         logger.info("Alpha-shape mesh: %d verts, %d faces", len(mesh.vertices), len(mesh.faces))
         return mesh
 
-    # Attempt 2: convex hull with colour transfer
-    logger.warning("Alpha shape produced no usable surface; falling back to convex hull")
+    # Fallback 2: convex hull
+    logger.warning("Alpha shape failed; falling back to convex hull")
     cloud = trimesh.PointCloud(
         points,
         colors=np.hstack([colors, np.full((n, 1), 255, dtype=np.uint8)]),
