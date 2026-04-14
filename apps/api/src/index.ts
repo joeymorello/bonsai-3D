@@ -1,6 +1,6 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import fastifyJwt from "@fastify/jwt";
@@ -33,6 +33,33 @@ const app = Fastify({ logger: true });
 
 // Health check (no auth)
 app.get("/health", async () => ({ status: "ok" }));
+
+// Screenshot upload (no auth, debug tool)
+app.get("/screenshot", async (_req, reply) => {
+  return reply.type("text/html").send(`<!DOCTYPE html><html><head><title>Upload Screenshot</title>
+<style>body{font-family:sans-serif;max-width:500px;margin:50px auto;text-align:center}
+input,button{margin:10px;padding:10px}button{background:#333;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px}
+#status{margin-top:20px;font-weight:bold}</style></head>
+<body><h2>Upload Screenshot</h2>
+<form id="f"><input type="file" id="file" accept="image/*" required><br><button type="submit">Upload</button></form>
+<div id="status"></div>
+<script>document.getElementById('f').onsubmit=async e=>{e.preventDefault();
+const f=document.getElementById('file').files[0];if(!f)return;
+document.getElementById('status').textContent='Uploading...';
+const buf=await f.arrayBuffer();
+const r=await fetch('/screenshot',{method:'POST',headers:{'Content-Type':f.type,'X-Filename':f.name},body:buf});
+const j=await r.json();
+document.getElementById('status').textContent=j.ok?'Done! Path: '+j.path:'Error';}
+</script></body></html>`);
+});
+app.addContentTypeParser(/^image\//, { parseAs: "buffer" }, (_req: any, body: Buffer, done: any) => done(null, body));
+app.post("/screenshot", async (req) => {
+  const ext = (req.headers["x-filename"] as string || "screenshot.png").split(".").pop() || "png";
+  const fname = `screenshot-${Date.now()}.${ext}`;
+  const fpath = `/home/sprite/uploads/${fname}`;
+  writeFileSync(fpath, req.body as Buffer);
+  return { ok: true, path: fpath };
+});
 
 // Global plugins
 await app.register(cors, { origin: true, credentials: true });
